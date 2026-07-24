@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProcessedEmailStatus {
+  extracted
+  skipped_no_transaction
+  extraction_failed
+}
+
+// Matches Sheet column K exactly. TelegramPhoto and ZReport are distinct on
+// purpose: ZReport is the automated daily Z-report submission; TelegramPhoto
+// is reserved for other photo submissions sent directly via Telegram.
+enum TransactionSource {
+  Email
+  TelegramPhoto @map("Telegram Photo")
+  Manual
+  ZReport       @map("Z-Report")
+}
+
+enum TransactionType {
+  Income
+  Expense
+}
+
+enum PaymentMethod {
+  CreditCard   @map("Credit Card")
+  BankTransfer @map("Bank Transfer")
+  Cash
+  Bit
+  PayPal
+  Other
+}
+
+enum PendingTransactionStatus {
+  pending
+  confirmed
+  rejected
+  editing
+}
+
+enum Role {
+  Admin
+  Worker
+}
+
+// Idempotency: never process the same email twice
+model ProcessedEmail {
+  gmailMessageId String               @id @map("gmail_message_id")
+  processedAt    DateTime             @map("processed_at")
+  status         ProcessedEmailStatus
+  transactions   PendingTransaction[]
+
+  @@map("processed_emails")
+}
+
+// The in-flight review queue — mirrors the Transactions tab columns 1:1,
+// so confirming a row is a straight field-mapping into an appendRow call
+model PendingTransaction {
+  id                Int                      @id @default(autoincrement())
+  source            TransactionSource
+  transactionType   TransactionType          @map("transaction_type")
+  gmailMessageId    String?                  @map("gmail_message_id") // NULL for Z-report rows
+  processedEmail    ProcessedEmail?          @relation(fields: [gmailMessageId], references: [gmailMessageId])
+  receiptDate       DateTime?                @map("receipt_date") // date on the document itself (col B)
+  receivedDate      DateTime                 @map("received_date") // date the email/photo arrived (col C)
+  category          String? // must match a value from the live Categories tab (col E) — read live, never hardcoded
+  vendorSource      String?                  @map("vendor_source") // who was paid / who paid (col F)
+  description       String? // col G
+  amount            Decimal // single ILS figure (col H) — non-ILS handled via notes
+  paymentMethod     PaymentMethod?           @map("payment_method")
+  notes             String? // original currency/amount if non-ILS, corrections (col P)
+  sourceLink        String?                  @map("source_link") // Gmail permalink or Drive file link (col O)
+  telegramUserId    String                   @map("telegram_user_id") // who is confirming (→ col L, Submitted By)
+  telegramUsername  String?                  @map("telegram_username")
+  submitterRole     Role                     @map("submitter_role") // resolved from BotUser
+  confidence        Float? // 0-1, from Claude — internal, not written to Sheet
+  status            PendingTransactionStatus @default(pending)
+  telegramChatId    String?                  @map("telegram_chat_id")
+  telegramMessageId String?                  @map("telegram_message_id")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  resolvedAt        DateTime?                @map("resolved_at") // → col N, Approval Date, set once confirmed
+
+  @@map("pending_transactions")
+}
+
+// Role registration — populated via invite-code self-registration on /start
+model BotUser {
+  telegramChatId   String   @id @map("telegram_chat_id")
+  telegramUsername String?  @map("telegram_username")
+  role             Role
+  registeredAt     DateTime @default(now()) @map("registered_at")
+
+  @@map("bot_users")
+}

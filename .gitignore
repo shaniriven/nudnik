@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+CLAUDE.local.md
+*.log
+.DS_Store
