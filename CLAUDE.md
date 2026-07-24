@@ -35,7 +35,37 @@ deployed on Railway as two services (`bot` long-running + `scan-cron` scheduled)
   values belong in env vars (see docs/architecture.md section 4a), never
   hardcoded strings in source.
 
+## Code review standards
+
+`/code-review` (and any manual review) of this repo's code must flag, in addition
+to correctness bugs:
+
+- **Duplication** — repeated logic, validation, or config that should be a shared
+  function/constant instead of copy-pasted per module.
+- **Magic strings/numbers** — literal values with meaning (statuses, Sheet column
+  letters, category names, thresholds, error codes) belong in a named constant or
+  enum, not inlined. Any string that must match a Sheet-facing value should trace
+  back to a single source (e.g. `sheetSchema.ts`'s `DROPDOWNS`, or the
+  `SOURCE_LABELS`/`PAYMENT_METHOD_LABELS` maps in `ledgerWriter.ts`), not be
+  retyped at each call site.
+- **Bypasses** — skipped validation, disabled lint/type rules (`@ts-ignore`/`any`
+  without a justifying comment), `--no-verify`, catch-and-ignore error handling,
+  or anything that routes around the zod-boundary + retry/backoff standard in
+  docs/architecture.md section 8b.
+- **Enums over strings** — any fixed, closed set of values should be a TypeScript
+  enum, not a bare string/string union — except `category`, which is deliberately
+  a plain `String` because it's read live from the Sheet at runtime (see
+  docs/architecture.md section 5).
+- **Redundant comments** — flag comments that restate what the code already says.
+  Only comments explaining a non-obvious WHY (a workaround, a hidden constraint, a
+  subtle invariant) should survive review.
+
 ## Commands
 
-(To be filled in once package.json exists — run `/init` after step 1 of the
-build order to have Claude Code populate real build/lint/test commands here.)
+- `npm run build` — compile via `tsc`
+- `npm run typecheck` / `npm run typecheck:scripts` — type-check `src/` / `scripts/`
+- `npm run lint` / `npm run lint:fix` — ESLint
+- `npm run format` / `npm run format:check` — Prettier
+- `npm test` / `npm run test:watch` — Vitest
+- `npm run prisma:generate` / `npm run prisma:migrate` / `npm run prisma:studio` — Prisma
+- `npm run docker:up` / `npm run docker:down` — local dev/test Postgres containers

@@ -36,11 +36,16 @@ the `googleapis` client boundary, per architecture.md section 8d).
 executed** as part of implementing this step. Real-Sheet integration
 verification is an explicit follow-up, listed under Manual Steps below.
 
-**Prerequisite fix bundled into this step:** `src/config/env.ts`'s zod schema
-is currently missing `TEST_DATABASE_URL` even though `.env.example`,
-`scripts/migrate-test-db.ts`, and `src/db/repositories/__tests__/testHelpers.ts`
-all reference `env.TEST_DATABASE_URL` — a real gap that should currently fail
-`npm run typecheck`. Fix it in the same pass as adding `TEST_GOOGLE_SHEET_ID`.
+**`TEST_DATABASE_URL` stays out of `env.ts` on purpose:** `env.ts` parses
+`process.env` eagerly at import time (`export const env = parseEnv(...)`), so
+making `TEST_DATABASE_URL` a required field there would fail that parse for
+every test file that imports `env.ts` — including fully-mocked suites (e.g.
+`src/sheets/**`) that never touch Postgres. Instead, `vitest.global-setup.ts`
+and `src/db/repositories/__tests__/testHelpers.ts` each parse
+`process.env.TEST_DATABASE_URL` directly and independently, and
+`global-setup.ts` treats it as non-fatal when unset (warns and skips
+migration) rather than blocking the whole run. Add `TEST_GOOGLE_SHEET_ID` to
+`env.ts`'s zod schema as usual — that one has no such conflict.
 
 **OAuth account split (binding for this step):** Sheets and Drive run under
 the **bar's own Google account**, separate from the owner's personal Gmail
@@ -78,23 +83,28 @@ pattern for every future external-API module):
 
 ## Scope of Step 2
 
-1. `src/sheets/sheetSchema.ts` — typed transcription of `docs/sheets-design.md`.
-2. `src/sheets/sheetsClient.ts` — OAuth2 wrapper + retry/logging/zod-validated
+1. `src/sheets/sheetSchema.ts` — typed transcription of `docs/sheets-design.md`
+   (Transactions/Categories column contract only).
+2. `src/sheets/dashboardSchema.ts` — Dashboard tab (Tab 3) layout constants and
+   formula generators, kept separate from `sheetSchema.ts`.
+3. `src/sheets/sheetsClient.ts` — OAuth2 wrapper + retry/logging/zod-validated
    boundary functions over the raw Sheets API.
-3. `src/sheets/categoriesReader.ts` — live Categories tab fetch, cached per run.
-4. `src/sheets/ledgerWriter.ts` — `appendRow`, TX-#### ID generation,
+4. `src/sheets/categoriesReader.ts` — live Categories tab fetch, cached per run.
+5. `src/sheets/ledgerWriter.ts` — `appendRow`, TX-#### ID generation,
    Approved/Edited status mapping, Running Balance formula per new row.
-5. `scripts/provision-sheet.ts` — creates a fresh 3-tab spreadsheet from
-   `sheetSchema.ts` alone (bar-agnostic), including a fully-generated,
-   working Dashboard (full automation, not headers-only — confirmed).
-6. `src/lib/withRetry.ts`, `src/lib/logger.ts` — new shared infra.
-7. Tests for all of the above, shipped alongside each module.
-8. `.env.example` + `env.ts` changes: rename `GOOGLE_OAUTH_CLIENT_ID/SECRET/
+6. `scripts/provision-sheet.ts` — creates a fresh 3-tab spreadsheet from
+   `sheetSchema.ts` and `dashboardSchema.ts` (bar-agnostic), including a
+   fully-generated, working Dashboard (full automation, not headers-only —
+   confirmed).
+7. `src/lib/withRetry.ts`, `src/lib/logger.ts` — new shared infra.
+8. Tests for all of the above, shipped alongside each module.
+9. `.env.example` + `env.ts` changes: rename `GOOGLE_OAUTH_CLIENT_ID/SECRET/
    REFRESH_TOKEN` → `SHEETS_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN` (already
    done in `.env.example` as of this doc; carry the same rename into
    `env.ts`'s zod schema, which does not yet reflect it); add
-   `TEST_GOOGLE_SHEET_ID` to the zod schema (already in `.env.example`); fix
-   the `TEST_DATABASE_URL` gap in the zod schema.
+   `TEST_GOOGLE_SHEET_ID` to the zod schema (already in `.env.example`).
+   `TEST_DATABASE_URL` deliberately does *not* go in `env.ts` — see note
+   above.
 
 **Not in scope:** `docs/architecture.md`, `.env.example`'s comments/structure
 (already corrected outside this implementation pass), and anything from
@@ -107,13 +117,15 @@ src/lib/withRetry.ts
 src/lib/__tests__/withRetry.test.ts
 src/lib/logger.ts
 src/sheets/sheetSchema.ts
+src/sheets/dashboardSchema.ts
 src/sheets/sheetsClient.ts
 src/sheets/categoriesReader.ts
 src/sheets/ledgerWriter.ts
+src/sheets/__tests__/sheetSchema.test.ts
+src/sheets/__tests__/dashboardSchema.test.ts
 src/sheets/__tests__/sheetsClient.test.ts
 src/sheets/__tests__/categoriesReader.test.ts
 src/sheets/__tests__/ledgerWriter.test.ts
-src/sheets/__tests__/sheetSchema.test.ts
 scripts/provision-sheet.ts
 ```
 Modified: `src/config/env.ts` (rename + additions described above),
@@ -153,7 +165,8 @@ Exports:
 - `RUNNING_BALANCE_FORMULA(row: number): string` — `=IF(D{row}="Income",
   H{row}, -H{row}) + Q{row-1}`, special-cased for `row === 2` (first data row)
   to `+ 0` instead of `+ Q1`, since `Q1` holds the header text, not a number.
-- Dashboard layout constants and formula generators (below).
+- Dashboard layout constants and formula generators live in a separate
+  `dashboardSchema.ts` (below), not in this file.
 
 ### Dashboard automation (full automation — confirmed)
 
@@ -161,7 +174,9 @@ All cell addresses are fixed at generation time since `provision-sheet.ts`
 controls the whole layout — no `INDIRECT` needed anywhere except one
 documented case. Layout constants (`DASHBOARD_BLOCK_A_START_ROW`,
 `DASHBOARD_MONTH_ROWS = 60`, `DASHBOARD_BLOCK_B_START_ROW`, etc.) live in
-`sheetSchema.ts`, not hardcoded in `provision-sheet.ts`.
+`dashboardSchema.ts`, not hardcoded in `provision-sheet.ts` and not in
+`sheetSchema.ts` (which stays scoped to the Transactions/Categories column
+contract).
 
 - **Key Metrics (Block C, single cells):**
   - *Current Balance* — `=IFERROR(INDEX(Transactions!Q2:Q,
@@ -290,11 +305,11 @@ documented case. Layout constants (`DASHBOARD_BLOCK_A_START_ROW`,
 
 ## Ordered execution sequence
 
-1. In `env.ts`: fix the `TEST_DATABASE_URL` gap; rename
-   `GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN` →
+1. In `env.ts`: rename `GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN` →
    `SHEETS_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN`; add
    `TEST_GOOGLE_SHEET_ID`. (`.env.example` already has the renamed/added
-   vars.) Add `googleapis` to `package.json`.
+   vars.) `TEST_DATABASE_URL` is deliberately left out of `env.ts` — see the
+   note under Context. Add `googleapis` to `package.json`.
 2. `src/lib/withRetry.ts` + tests — generic, no Google dependency, needed by
    everything after it.
 3. `src/lib/logger.ts` — pino singleton.
@@ -330,9 +345,8 @@ documented case. Layout constants (`DASHBOARD_BLOCK_A_START_ROW`,
 
 ## Verification (no real credentials needed)
 
-1. `npm run typecheck` — passes, including the `TEST_DATABASE_URL` fix and
-   the `SHEETS_OAUTH_*` rename (no leftover references to the old
-   `GOOGLE_OAUTH_*` names anywhere in `src/`).
+1. `npm run typecheck` — passes, including the `SHEETS_OAUTH_*` rename (no
+   leftover references to the old `GOOGLE_OAUTH_*` names anywhere in `src/`).
 2. `npm run lint` — zero errors, no unjustified `any`/`ts-ignore`.
 3. `npm test` — all new unit tests pass:
    - `sheetSchema.test.ts` asserts header count/order matches the 17-column

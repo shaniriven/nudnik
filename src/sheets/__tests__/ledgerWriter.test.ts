@@ -2,7 +2,6 @@ import type { sheets_v4 } from 'googleapis';
 import { Prisma } from '@prisma/client';
 import type { PendingTransaction } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-import { DROPDOWNS } from '../sheetSchema';
 import { GOOGLE_API_TIMEOUT_MS } from '../sheetsClient';
 import { createFakeSheetsClient } from './testHelpers';
 
@@ -10,14 +9,7 @@ vi.mock('../../config/env', () => ({
   env: { BAR_TIMEZONE: 'Asia/Jerusalem', NODE_ENV: 'test' },
 }));
 
-import {
-  PAYMENT_METHOD_LABELS,
-  PartialAppendError,
-  ROLE_LABELS,
-  SOURCE_LABELS,
-  TRANSACTION_TYPE_LABELS,
-  appendRow,
-} from '../ledgerWriter';
+import { PartialAppendError, appendRow } from '../ledgerWriter';
 
 function buildTransaction(overrides: Partial<PendingTransaction> = {}): PendingTransaction {
   return {
@@ -177,33 +169,5 @@ describe('appendRow', () => {
     expect((error as PartialAppendError).transactionId).toBe('TX-0007');
     expect((error as PartialAppendError).rowNumber).toBe(15);
     expect(sheets.spreadsheets.values.append).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('enum-to-label mapping drift guard — transactionType and submitterRole', () => {
-  it('every TRANSACTION_TYPE_LABELS value is a valid Transactions!D dropdown option', () => {
-    for (const label of Object.values(TRANSACTION_TYPE_LABELS)) {
-      expect(DROPDOWNS.type).toContain(label);
-    }
-  });
-
-  it('every ROLE_LABELS value is a valid Transactions!M dropdown option', () => {
-    for (const label of Object.values(ROLE_LABELS)) {
-      expect(DROPDOWNS.submitterRole).toContain(label);
-    }
-  });
-});
-
-describe('enum-to-label mapping drift guard', () => {
-  it('every SOURCE_LABELS value is a valid Transactions!K dropdown option', () => {
-    for (const label of Object.values(SOURCE_LABELS)) {
-      expect(DROPDOWNS.source).toContain(label);
-    }
-  });
-
-  it('every PAYMENT_METHOD_LABELS value is a valid Transactions!I dropdown option', () => {
-    for (const label of Object.values(PAYMENT_METHOD_LABELS)) {
-      expect(DROPDOWNS.paymentMethod).toContain(label);
-    }
   });
 });

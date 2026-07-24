@@ -224,6 +224,10 @@ The table mirrors the Sheet's actual columns rather than a generic `amount`/`cur
 /src
   /config
     env.ts                 # loads & validates env vars (zod schema)
+  /lib
+    withRetry.ts            # shared retry/backoff utility (section 8b)
+    logger.ts                # pino singleton (section 8c)
+    barTimezone.ts            # BAR_TIMEZONE-aware date/time part extraction, used wherever a Sheet-facing date/timestamp is formatted
   /email
     gmailClient.ts          # OAuth2 client, thin wrapper over googleapis
     emailScanner.ts         # runs the query, iterates unprocessed messages
@@ -247,6 +251,8 @@ The table mirrors the Sheet's actual columns rather than a generic `amount`/`cur
       zreportHandler.ts      # receives Z-report photo (worker or admin) → upload to Drive → extract → queue
       pendingHandler.ts      # /pending command → digest of all currently-open pending_transactions rows
   /sheets
+    sheetSchema.ts            # Transactions/Categories column contract, label maps, dropdowns — single source of truth transcribed from docs/sheets-design.md
+    dashboardSchema.ts         # Dashboard tab layout constants + formula generators (Tab 3), consumed only by scripts/provision-sheet.ts
     sheetsClient.ts
     categoriesReader.ts      # fetches live Categories tab, cached per run
     ledgerWriter.ts          # appendRow(transaction) — generates TX-#### id, sets Status Approved/Edited
@@ -278,6 +284,9 @@ Use grammY's `conversations` plugin: tapping "✏️ Edit" starts a conversation
 
 **e. Sheets writes only happen on confirm**
 This keeps the `Transactions` tab pure ground truth — no "pending" rows ever touch the sheet. Matches the Sheet spec exactly: nothing "Pending" or "Rejected" ever reaches it.
+
+**e2. A confirmed row's Running Balance write can fail independently of its append**
+`ledgerWriter.appendRow` writes columns A–P first, then writes the Running Balance formula into column Q as a second call (it needs the row number the first call returns). If that second call fails, the row already exists in the Sheet — blindly retrying `appendRow` would duplicate it. `ledgerWriter.ts` throws a dedicated `PartialAppendError` (carrying the transaction ID and row number) in that case, so the caller knows to retry only `writeRunningBalanceFormula` for that row, never `appendRow` itself.
 
 **f. Categories are read from the Sheet's `Categories` tab at runtime, not hardcoded**
 The `categoriesReader.ts` module fetches the live category list before building the Claude tool schema, so the enum always matches whatever's actually in the Sheet. You can add or rename a category there without a code change — matches the Sheet spec's explicit design intent.

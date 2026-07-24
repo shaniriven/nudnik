@@ -37,7 +37,8 @@ Decisions already made for this step:
 2. `docker-compose.yml` with two Postgres services (dev DB + disposable test
    DB).
 3. `src/config/env.ts` — zod-validated env loader (section 8e), covering every
-   var in `.env.example` plus a new `TEST_DATABASE_URL`.
+   var in `.env.example` except `TEST_DATABASE_URL` (see note below — that one
+   is read directly by test infrastructure instead).
 4. `prisma/schema.prisma` — the three models from architecture.md section 5
    (`ProcessedEmail`, `PendingTransaction`, `BotUser`), first migration via
    `prisma migrate dev`.
@@ -109,9 +110,16 @@ add more as those features are built):
 - `processedEmailRepo`: `findByGmailMessageId`, `create`, `updateStatus`
 - `pendingTransactionRepo`: `create`, `findById`, `updateStatus`
 
-**env.ts** — zod object validating every `.env.example` key (including the new
-`TEST_DATABASE_URL`) at startup; throws with a clear aggregated message
-listing every missing/invalid key, not just the first one.
+**env.ts** — zod object validating every `.env.example` key at startup; throws
+with a clear aggregated message listing every missing/invalid key, not just
+the first one. `TEST_DATABASE_URL` is deliberately excluded: `env.ts` parses
+`process.env` eagerly at import time, so making it required there would break
+every test file that imports `env.ts`, including fully-mocked suites that
+never touch Postgres. Instead, test infrastructure that actually needs a DB
+connection (`vitest.global-setup.ts`, `src/db/repositories/__tests__/testHelpers.ts`)
+parses `process.env.TEST_DATABASE_URL` directly and independently, and
+`global-setup.ts` treats it as non-fatal when unset (warns and skips
+migration rather than blocking the whole run).
 
 ## Manual steps (human-run, outside automation)
 

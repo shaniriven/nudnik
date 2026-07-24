@@ -1,55 +1,25 @@
 import type { sheets_v4 } from 'googleapis';
-import type {
-  PaymentMethod,
-  PendingTransaction,
-  Role,
-  TransactionSource,
-  TransactionType,
-} from '@prisma/client';
+import { Role, type PendingTransaction } from '@prisma/client';
 import { z } from 'zod';
-import { env } from '../config/env';
-import { RUNNING_BALANCE_FORMULA } from './sheetSchema';
+import { getBarTimezoneParts } from '../lib/barTimezone';
+import {
+  PAYMENT_METHOD_LABELS,
+  ROLE_LABELS,
+  RUNNING_BALANCE_FORMULA,
+  SOURCE_LABELS,
+  TransactionStatus,
+  TRANSACTION_TYPE_LABELS,
+} from './sheetSchema';
 import { appendValues, updateValues } from './sheetsClient';
 
 const TRANSACTIONS_APPEND_RANGE = 'Transactions!A:P';
-
-// Prisma's @map on an enum changes the *database* value, not necessarily
-// what the generated TS client exposes at runtime — these maps are the
-// explicit, tested source of truth for each enum member's exact Sheet
-// string, rather than assuming e.g. transaction.source already equals
-// "Z-Report".
-export const SOURCE_LABELS: Record<TransactionSource, string> = {
-  Email: 'Email',
-  TelegramPhoto: 'Telegram Photo',
-  Manual: 'Manual',
-  ZReport: 'Z-Report',
-};
-
-export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  CreditCard: 'Credit Card',
-  BankTransfer: 'Bank Transfer',
-  Cash: 'Cash',
-  Bit: 'Bit',
-  PayPal: 'PayPal',
-  Other: 'Other',
-};
-
-export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
-  Income: 'Income',
-  Expense: 'Expense',
-};
-
-export const ROLE_LABELS: Record<Role, string> = {
-  Admin: 'Admin',
-  Worker: 'Worker',
-};
 
 const writeInvariantsSchema = z.object({
   category: z.string().min(1),
   amount: z.number(),
   resolvedAt: z.date(),
   receivedDate: z.date(),
-  submitterRole: z.enum(['Admin', 'Worker']),
+  submitterRole: z.nativeEnum(Role),
 });
 
 // appendRow is only ever called post-confirm, but the Prisma model has
@@ -63,39 +33,6 @@ function assertWritable(transaction: PendingTransaction): void {
     receivedDate: transaction.receivedDate,
     submitterRole: transaction.submitterRole,
   });
-}
-
-interface BarTimezoneParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
-
-function getBarTimezoneParts(date: Date): BarTimezoneParts {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: env.BAR_TIMEZONE,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    hourCycle: 'h23',
-  }).formatToParts(date);
-
-  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
-
-  return {
-    year: get('year'),
-    month: get('month'),
-    day: get('day'),
-    hour: get('hour'),
-    minute: get('minute'),
-    second: get('second'),
-  };
 }
 
 // Written as a =DATE(...) formula (via appendValues' USER_ENTERED) rather than a
@@ -134,7 +71,7 @@ function buildRowValues(
     transaction.description ?? '',
     transaction.amount.toNumber(),
     transaction.paymentMethod ? PAYMENT_METHOD_LABELS[transaction.paymentMethod] : '',
-    edited ? 'Edited' : 'Approved',
+    edited ? TransactionStatus.Edited : TransactionStatus.Approved,
     SOURCE_LABELS[transaction.source],
     transaction.telegramUsername ?? transaction.telegramUserId,
     ROLE_LABELS[transaction.submitterRole],

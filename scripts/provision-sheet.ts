@@ -1,6 +1,7 @@
 // Creates a fresh 3-tab Nudnik spreadsheet (Transactions / Categories /
-// Dashboard) from sheetSchema.ts alone — bar-agnostic, reusable for any bar
-// by rerunning against a different BAR_NAME / CATEGORIES list.
+// Dashboard) from sheetSchema.ts and dashboardSchema.ts — bar-agnostic,
+// reusable for any bar by rerunning against a different BAR_NAME /
+// CATEGORIES list.
 //
 // Not executed as part of step 2's implementation (no real OAuth
 // credentials yet) — see docs/steps/02-sheets-writer.md "Manual steps".
@@ -8,7 +9,6 @@ import 'dotenv/config';
 import type { sheets_v4 } from 'googleapis';
 import { env } from '../src/config/env';
 import {
-  CATEGORIES,
   DASHBOARD_BLOCK_A_HEADER_ROW,
   DASHBOARD_BLOCK_A_HEADERS,
   DASHBOARD_BLOCK_A_START_ROW,
@@ -16,12 +16,11 @@ import {
   DASHBOARD_BLOCK_B_HEADERS,
   DASHBOARD_BLOCK_C_START_ROW,
   DASHBOARD_MONTH_ROWS,
-  DROPDOWNS,
-  TRANSACTIONS_HEADERS,
   generateCategoryBreakdownRows,
   generateKeyMetricsRows,
   generateMonthlySummaryRows,
-} from '../src/sheets/sheetSchema';
+} from '../src/sheets/dashboardSchema';
+import { CATEGORIES, DROPDOWNS, TRANSACTIONS_HEADERS } from '../src/sheets/sheetSchema';
 import {
   batchUpdate,
   createSheetsClient,

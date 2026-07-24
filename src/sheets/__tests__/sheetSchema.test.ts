@@ -1,17 +1,77 @@
 import { describe, expect, it } from 'vitest';
 import {
   CATEGORIES,
-  DASHBOARD_BLOCK_A_START_ROW,
-  DASHBOARD_MONTH_ROWS,
+  DROPDOWNS,
+  PAYMENT_METHOD_LABELS,
+  ROLE_LABELS,
   RUNNING_BALANCE_FORMULA,
+  SOURCE_LABELS,
   TRANSACTIONS_HEADERS,
-  categoryBreakdownPercentFormula,
-  categoryBreakdownTotalFormula,
-  generateCategoryBreakdownRows,
-  generateKeyMetricsRows,
-  generateMonthlySummaryRows,
-  monthlySummaryRunningBalanceFormula,
+  TransactionStatus,
+  TRANSACTION_TYPE_LABELS,
 } from '../sheetSchema';
+
+describe('label maps', () => {
+  const labelMaps = {
+    TRANSACTION_TYPE_LABELS,
+    PAYMENT_METHOD_LABELS,
+    SOURCE_LABELS,
+    ROLE_LABELS,
+    TransactionStatus,
+  };
+
+  it.each(Object.entries(labelMaps))('%s has no duplicate label values', (_name, labels) => {
+    const values = Object.values(labels);
+    expect(new Set(values).size).toBe(values.length);
+  });
+
+  it('DROPDOWNS is derived from the label maps, not retyped', () => {
+    expect(DROPDOWNS.type).toEqual(Object.values(TRANSACTION_TYPE_LABELS));
+    expect(DROPDOWNS.paymentMethod).toEqual(Object.values(PAYMENT_METHOD_LABELS));
+    expect(DROPDOWNS.source).toEqual(Object.values(SOURCE_LABELS));
+    expect(DROPDOWNS.submitterRole).toEqual(Object.values(ROLE_LABELS));
+    expect(DROPDOWNS.status).toEqual(Object.values(TransactionStatus));
+  });
+
+  // Independent of the DROPDOWNS-derivation check above: since DROPDOWNS is now
+  // mechanically derived from these same maps, that check alone can't catch a
+  // typo'd label value (it would just propagate). These pin each map against a
+  // hand-typed expectation, transcribed from docs/sheets-design.md, so a typo
+  // in any Sheet-facing label fails a test instead of silently reaching the
+  // Sheet's dropdown validation.
+  it('TRANSACTION_TYPE_LABELS matches the Sheet-facing values exactly', () => {
+    expect(TRANSACTION_TYPE_LABELS).toEqual({ Income: 'Income', Expense: 'Expense' });
+  });
+
+  it('PAYMENT_METHOD_LABELS matches the Sheet-facing values exactly', () => {
+    expect(PAYMENT_METHOD_LABELS).toEqual({
+      CreditCard: 'Credit Card',
+      BankTransfer: 'Bank Transfer',
+      Cash: 'Cash',
+      Bit: 'Bit',
+      PayPal: 'PayPal',
+      Other: 'Other',
+    });
+  });
+
+  it('SOURCE_LABELS matches the Sheet-facing values exactly', () => {
+    expect(SOURCE_LABELS).toEqual({
+      Email: 'Email',
+      TelegramPhoto: 'Telegram Photo',
+      Manual: 'Manual',
+      ZReport: 'Z-Report',
+    });
+  });
+
+  it('ROLE_LABELS matches the Sheet-facing values exactly', () => {
+    expect(ROLE_LABELS).toEqual({ Admin: 'Admin', Worker: 'Worker' });
+  });
+
+  it('TransactionStatus matches the Sheet-facing values exactly', () => {
+    expect(TransactionStatus.Approved).toBe('Approved');
+    expect(TransactionStatus.Edited).toBe('Edited');
+  });
+});
 
 describe('TRANSACTIONS_HEADERS', () => {
   it('has exactly 17 headers (columns A through Q) in the spec order', () => {
@@ -41,82 +101,5 @@ describe('RUNNING_BALANCE_FORMULA', () => {
 
   it('throws for row 1 (reserved for headers) instead of emitting a Q0 reference', () => {
     expect(() => RUNNING_BALANCE_FORMULA(1)).toThrow(/row 1 is reserved for headers/);
-  });
-});
-
-describe('generateKeyMetricsRows', () => {
-  it('generates 5 metric rows starting at the block start row', () => {
-    const rows = generateKeyMetricsRows();
-    expect(rows).toHaveLength(5);
-    expect(rows[0]?.label).toBe('Current Balance');
-    expect(rows[0]?.formula).toContain('INDEX(Transactions!Q2:Q');
-  });
-});
-
-describe('monthlySummaryRunningBalanceFormula', () => {
-  it('seeds the first data row of the block from 0', () => {
-    expect(monthlySummaryRunningBalanceFormula(DASHBOARD_BLOCK_A_START_ROW, true)).toBe(
-      `=D${DASHBOARD_BLOCK_A_START_ROW}+0`,
-    );
-  });
-
-  it('adds this row net to the previous row running balance otherwise', () => {
-    const row = DASHBOARD_BLOCK_A_START_ROW + 1;
-    expect(monthlySummaryRunningBalanceFormula(row, false)).toBe(`=E${row - 1}+D${row}`);
-  });
-});
-
-describe('generateMonthlySummaryRows', () => {
-  const rows = generateMonthlySummaryRows(new Date(2021, 7, 1));
-
-  it('generates exactly DASHBOARD_MONTH_ROWS rows', () => {
-    expect(rows).toHaveLength(DASHBOARD_MONTH_ROWS);
-  });
-
-  it('seeds the first row (row 9, anchor month) with a +0 running balance', () => {
-    const first = rows[0];
-    expect(first?.row).toBe(DASHBOARD_BLOCK_A_START_ROW);
-    expect(first?.month).toEqual(new Date(2021, 7, 1));
-    expect(first?.runningBalanceFormula).toBe(`=D${DASHBOARD_BLOCK_A_START_ROW}+0`);
-  });
-
-  it('advances the second row to the next month and chains the running balance', () => {
-    const second = rows[1];
-    expect(second?.month).toEqual(new Date(2021, 8, 1));
-    expect(second?.runningBalanceFormula).toBe(
-      `=E${DASHBOARD_BLOCK_A_START_ROW}+D${DASHBOARD_BLOCK_A_START_ROW + 1}`,
-    );
-  });
-
-  it('ends the last row of the block 59 months after the anchor', () => {
-    const last = rows[DASHBOARD_MONTH_ROWS - 1];
-    expect(last?.row).toBe(DASHBOARD_BLOCK_A_START_ROW + DASHBOARD_MONTH_ROWS - 1);
-    expect(last?.month).toEqual(new Date(2026, 6, 1));
-  });
-});
-
-describe('generateCategoryBreakdownRows', () => {
-  it('generates one row per expense-type category only', () => {
-    const rows = generateCategoryBreakdownRows();
-    const expenseCount = CATEGORIES.filter((c) => c.type === 'Expense').length;
-    expect(rows).toHaveLength(expenseCount);
-    expect(
-      rows.every((r) => CATEGORIES.some((c) => c.name === r.name && c.type === 'Expense')),
-    ).toBe(true);
-  });
-
-  it('computes the percent formula range across the whole block', () => {
-    const rows = generateCategoryBreakdownRows();
-    const first = rows[0];
-    const last = rows[rows.length - 1];
-    expect(first?.percentFormula).toBe(
-      categoryBreakdownPercentFormula(first!.row, first!.row, last!.row),
-    );
-  });
-});
-
-describe('categoryBreakdownTotalFormula', () => {
-  it('escapes double quotes in category names', () => {
-    expect(categoryBreakdownTotalFormula('Odd "Name"')).toContain('Odd ""Name""');
   });
 });
