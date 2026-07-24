@@ -63,8 +63,15 @@ export const DROPDOWNS = {
 
 // Special-cased for row 2 (first data row): Q1 holds the header text, not a
 // number, so the previous-balance term must be literal 0 there instead of
-// +Q1.
+// +Q1. Row 1 is reserved for headers — a data row can never legitimately land
+// there, so that's a caller/provisioning bug, not a case to paper over with a
+// formula referencing a nonexistent Q0.
 export function RUNNING_BALANCE_FORMULA(row: number): string {
+  if (row < 2) {
+    throw new Error(
+      `RUNNING_BALANCE_FORMULA: row ${row} is invalid — row 1 is reserved for headers, data rows start at 2`,
+    );
+  }
   const previousBalance = row === 2 ? '0' : `Q${row - 1}`;
   return `=IF(D${row}="Income", H${row}, -H${row}) + ${previousBalance}`;
 }
@@ -73,8 +80,6 @@ export function RUNNING_BALANCE_FORMULA(row: number): string {
 // All cell addresses are fixed at generation time since provision-sheet.ts
 // controls the whole layout, so every block's rows are plain constants here
 // rather than derived at runtime.
-
-export const DASHBOARD_TITLE_ROW = 1;
 
 // Block C — Key Metrics (single cells, top of dashboard). Column A = label,
 // column B = formula/value.
@@ -102,10 +107,12 @@ export const DASHBOARD_BLOCK_B_START_ROW = 71;
 export const CURRENT_BALANCE_FORMULA =
   '=IFERROR(INDEX(Transactions!Q2:Q, COUNTA(Transactions!Q2:Q)), 0)';
 
+function sumifsByType(type: 'Income' | 'Expense', startExpr: string, endExpr: string): string {
+  return `SUMIFS(Transactions!H:H, Transactions!D:D, "${type}", Transactions!B:B, ">="&${startExpr}, Transactions!B:B, "<="&${endExpr})`;
+}
+
 function monthNetExpr(startExpr: string, endExpr: string): string {
-  const income = `SUMIFS(Transactions!H:H, Transactions!D:D, "Income", Transactions!B:B, ">="&${startExpr}, Transactions!B:B, "<="&${endExpr})`;
-  const expenses = `SUMIFS(Transactions!H:H, Transactions!D:D, "Expense", Transactions!B:B, ">="&${startExpr}, Transactions!B:B, "<="&${endExpr})`;
-  return `${income} - ${expenses}`;
+  return `${sumifsByType('Income', startExpr, endExpr)} - ${sumifsByType('Expense', startExpr, endExpr)}`;
 }
 
 const THIS_MONTH_NET_EXPR = monthNetExpr('EOMONTH(TODAY(),-1)+1', 'EOMONTH(TODAY(),0)');
@@ -113,8 +120,7 @@ const PRIOR_MONTH_NET_EXPR = monthNetExpr('EOMONTH(TODAY(),-2)+1', 'EOMONTH(TODA
 
 export const THIS_MONTH_NET_FORMULA = `=${THIS_MONTH_NET_EXPR}`;
 
-export const AVG_MONTHLY_BURN_FORMULA =
-  '=SUMIFS(Transactions!H:H, Transactions!D:D, "Expense", Transactions!B:B, ">="&EOMONTH(TODAY(),-6)+1, Transactions!B:B, "<="&EOMONTH(TODAY(),0)) / 6';
+export const AVG_MONTHLY_BURN_FORMULA = `=${sumifsByType('Expense', 'EOMONTH(TODAY(),-6)+1', 'EOMONTH(TODAY(),0)')} / 6`;
 
 // Flagged as the single trickiest formula (QUERY has locale-specific
 // argument-separator quirks) — verify by eye against a real Sheet before
@@ -156,12 +162,19 @@ export function generateKeyMetricsRows(): KeyMetricRow[] {
   ];
 }
 
+function monthBounds(year: number, month: number): { start: string; end: string } {
+  const start = `DATE(${year},${month},1)`;
+  return { start, end: `EOMONTH(${start},0)` };
+}
+
 export function monthlySummaryIncomeFormula(year: number, month: number): string {
-  return `=SUMIFS(Transactions!H:H, Transactions!D:D, "Income", Transactions!B:B, ">="&DATE(${year},${month},1), Transactions!B:B, "<="&EOMONTH(DATE(${year},${month},1),0))`;
+  const { start, end } = monthBounds(year, month);
+  return `=${sumifsByType('Income', start, end)}`;
 }
 
 export function monthlySummaryExpensesFormula(year: number, month: number): string {
-  return `=SUMIFS(Transactions!H:H, Transactions!D:D, "Expense", Transactions!B:B, ">="&DATE(${year},${month},1), Transactions!B:B, "<="&EOMONTH(DATE(${year},${month},1),0))`;
+  const { start, end } = monthBounds(year, month);
+  return `=${sumifsByType('Expense', start, end)}`;
 }
 
 export function monthlySummaryNetFormula(row: number): string {

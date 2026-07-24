@@ -3,7 +3,6 @@ import { parseEnv } from '../env';
 
 const validEnv: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgresql://nudnik:nudnik@localhost:5432/nudnik_dev',
-  TEST_DATABASE_URL: 'postgresql://nudnik:nudnik@localhost:5432/nudnik_test',
   TELEGRAM_BOT_TOKEN: 'telegram-token',
   CLAUDE_API_KEY: 'claude-key',
   SHEETS_OAUTH_CLIENT_ID: 'client-id',
@@ -51,9 +50,13 @@ describe('parseEnv', () => {
     }
   });
 
+  it('rejects an invalid IANA timezone name', () => {
+    const broken: NodeJS.ProcessEnv = { ...validEnv, BAR_TIMEZONE: 'Asia/Jerusalm' };
+    expect(() => parseEnv(broken)).toThrow(/valid IANA timezone/);
+  });
+
   it('allows Telegram/Claude/Google/invite-code vars to be omitted (not built yet)', () => {
     const {
-      TEST_DATABASE_URL: _TEST_DATABASE_URL,
       TELEGRAM_BOT_TOKEN: _TELEGRAM_BOT_TOKEN,
       CLAUDE_API_KEY: _CLAUDE_API_KEY,
       SHEETS_OAUTH_CLIENT_ID: _SHEETS_OAUTH_CLIENT_ID,

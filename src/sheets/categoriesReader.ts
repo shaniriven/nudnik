@@ -11,27 +11,41 @@ const categorySchema = z.object({
 
 export type Category = z.infer<typeof categorySchema>;
 
-let cache: { spreadsheetId: string; categories: Category[] } | null = null;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Keyed by spreadsheetId (not a single mutable slot) so two concurrent calls for
+// different spreadsheetIds can never clobber each other's cached entry.
+const cache = new Map<string, { categories: Category[]; cachedAt: number }>();
 
 export async function getCategories(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
   options: { forceRefresh?: boolean } = {},
 ): Promise<Category[]> {
-  if (cache && cache.spreadsheetId === spreadsheetId && !options.forceRefresh) {
-    return cache.categories;
+  const cached = cache.get(spreadsheetId);
+  const isFresh = cached !== undefined && Date.now() - cached.cachedAt < CACHE_TTL_MS;
+  if (isFresh && !options.forceRefresh) {
+    return cached.categories;
   }
 
   const rows = await getValues(sheets, spreadsheetId, CATEGORIES_RANGE);
-  const categories = (rows ?? []).map((row) => {
-    const [name, type] = row;
-    return categorySchema.parse({ name, type });
-  });
+  const categories = (rows ?? [])
+    .filter((row) => row.length > 0)
+    .map((row, index) => {
+      const [name, type] = row;
+      const result = categorySchema.safeParse({ name, type });
+      if (!result.success) {
+        throw new Error(
+          `Categories!A${index + 2} ("${String(name ?? '')}") is invalid: expected Type to be "Income" or "Expense", got ${String(type ?? '(empty)')}`,
+        );
+      }
+      return result.data;
+    });
 
-  cache = { spreadsheetId, categories };
+  cache.set(spreadsheetId, { categories, cachedAt: Date.now() });
   return categories;
 }
 
 export function resetCategoriesCache(): void {
-  cache = null;
+  cache.clear();
 }

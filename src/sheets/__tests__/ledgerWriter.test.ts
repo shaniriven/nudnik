@@ -3,12 +3,21 @@ import { Prisma } from '@prisma/client';
 import type { PendingTransaction } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { DROPDOWNS } from '../sheetSchema';
+import { GOOGLE_API_TIMEOUT_MS } from '../sheetsClient';
+import { createFakeSheetsClient } from './testHelpers';
 
 vi.mock('../../config/env', () => ({
-  env: { BAR_TIMEZONE: 'Asia/Jerusalem' },
+  env: { BAR_TIMEZONE: 'Asia/Jerusalem', NODE_ENV: 'test' },
 }));
 
-import { PAYMENT_METHOD_LABELS, SOURCE_LABELS, appendRow } from '../ledgerWriter';
+import {
+  PAYMENT_METHOD_LABELS,
+  PartialAppendError,
+  ROLE_LABELS,
+  SOURCE_LABELS,
+  TRANSACTION_TYPE_LABELS,
+  appendRow,
+} from '../ledgerWriter';
 
 function buildTransaction(overrides: Partial<PendingTransaction> = {}): PendingTransaction {
   return {
@@ -50,14 +59,7 @@ function getAppendedRow(sheets: sheets_v4.Sheets, callIndex: number): (string | 
 }
 
 function fakeSheetsClient(updatedRange: string): sheets_v4.Sheets {
-  return {
-    spreadsheets: {
-      values: {
-        append: vi.fn().mockResolvedValue({ data: { updates: { updatedRange } } }),
-        update: vi.fn().mockResolvedValue({ data: { updatedRange: 'Transactions!Q15' } }),
-      },
-    },
-  } as unknown as sheets_v4.Sheets;
+  return createFakeSheetsClient({ appendUpdatedRange: updatedRange });
 }
 
 describe('appendRow', () => {
@@ -111,6 +113,7 @@ describe('appendRow', () => {
         range: 'Transactions!Q23',
         requestBody: { values: [['=IF(D23="Income", H23, -H23) + Q22']] },
       }),
+      { timeout: GOOGLE_API_TIMEOUT_MS },
     );
   });
 
@@ -122,6 +125,7 @@ describe('appendRow', () => {
       expect.objectContaining({
         requestBody: { values: [['=IF(D2="Income", H2, -H2) + 0']] },
       }),
+      { timeout: GOOGLE_API_TIMEOUT_MS },
     );
   });
 
@@ -154,9 +158,39 @@ describe('appendRow', () => {
     );
 
     const row = getAppendedRow(sheets, 0);
-    expect(row[1]).toBe('2026-07-16');
-    expect(row[2]).toBe('2026-07-16');
-    expect(row[13]).toBe('2026-07-16 01:00:00');
+    expect(row[1]).toBe('=DATE(2026,7,16)');
+    expect(row[2]).toBe('=DATE(2026,7,16)');
+    expect(row[13]).toBe('=DATE(2026,7,16)+TIME(1,0,0)');
+  });
+
+  it('throws PartialAppendError (not a plain error) when the Running Balance write fails after the row is appended', async () => {
+    const sheets = fakeSheetsClient('Transactions!A15:P15');
+    (sheets.spreadsheets.values.update as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('network blip'),
+    );
+
+    const error = await appendRow(sheets, 'sheet-id', buildTransaction({ id: 7 }), {
+      edited: false,
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(PartialAppendError);
+    expect((error as PartialAppendError).transactionId).toBe('TX-0007');
+    expect((error as PartialAppendError).rowNumber).toBe(15);
+    expect(sheets.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('enum-to-label mapping drift guard — transactionType and submitterRole', () => {
+  it('every TRANSACTION_TYPE_LABELS value is a valid Transactions!D dropdown option', () => {
+    for (const label of Object.values(TRANSACTION_TYPE_LABELS)) {
+      expect(DROPDOWNS.type).toContain(label);
+    }
+  });
+
+  it('every ROLE_LABELS value is a valid Transactions!M dropdown option', () => {
+    for (const label of Object.values(ROLE_LABELS)) {
+      expect(DROPDOWNS.submitterRole).toContain(label);
+    }
   });
 });
 

@@ -51,4 +51,30 @@ describe('withRetry', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onRetry).toHaveBeenCalledWith(expect.any(Error), 1);
   });
+
+  it('uses computeDelayMs instead of exponential backoff when provided', async () => {
+    vi.useFakeTimers();
+    try {
+      const computeDelayMs = vi.fn().mockReturnValue(5000);
+      const fn = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('rate limited'))
+        .mockResolvedValueOnce('ok');
+
+      const promise = withRetry(fn, {
+        retries: 2,
+        isRetryable: () => true,
+        baseDelayMs: 999999,
+        computeDelayMs,
+      });
+
+      await vi.advanceTimersByTimeAsync(5000);
+      const result = await promise;
+
+      expect(result).toBe('ok');
+      expect(computeDelayMs).toHaveBeenCalledWith(expect.any(Error), 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -1,5 +1,11 @@
 import type { sheets_v4 } from 'googleapis';
-import type { PaymentMethod, PendingTransaction, TransactionSource } from '@prisma/client';
+import type {
+  PaymentMethod,
+  PendingTransaction,
+  Role,
+  TransactionSource,
+  TransactionType,
+} from '@prisma/client';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { RUNNING_BALANCE_FORMULA } from './sheetSchema';
@@ -28,6 +34,16 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   Other: 'Other',
 };
 
+export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
+  Income: 'Income',
+  Expense: 'Expense',
+};
+
+export const ROLE_LABELS: Record<Role, string> = {
+  Admin: 'Admin',
+  Worker: 'Worker',
+};
+
 const writeInvariantsSchema = z.object({
   category: z.string().min(1),
   amount: z.number(),
@@ -49,31 +65,58 @@ function assertWritable(transaction: PendingTransaction): void {
   });
 }
 
-function formatInBarTimezone(date: Date, options: Intl.DateTimeFormatOptions): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: env.BAR_TIMEZONE, ...options }).format(date);
+interface BarTimezoneParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
 }
 
+function getBarTimezoneParts(date: Date): BarTimezoneParts {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: env.BAR_TIMEZONE,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour'),
+    minute: get('minute'),
+    second: get('second'),
+  };
+}
+
+// Written as a =DATE(...) formula (via appendValues' USER_ENTERED) rather than a
+// locale-formatted string, so the cell deterministically becomes a real date value
+// regardless of the target spreadsheet's locale settings — a plain "YYYY-MM-DD"
+// string's auto-parse into a date under USER_ENTERED is locale-dependent, a formula
+// isn't.
 function formatDate(date: Date | null): string {
   if (!date) {
     return '';
   }
-  return formatInBarTimezone(date, { year: 'numeric', month: '2-digit', day: '2-digit' });
+  const { year, month, day } = getBarTimezoneParts(date);
+  return `=DATE(${year},${month},${day})`;
 }
 
-// Deliberately space-separated local time ("YYYY-MM-DD HH:mm:ss"), not ISO —
-// ISO's "Z"/offset suffix would misrepresent a bar-timezone value as UTC.
 function formatTimestamp(date: Date | null): string {
   if (!date) {
     return '';
   }
-  const datePart = formatDate(date);
-  const timePart = formatInBarTimezone(date, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  });
-  return `${datePart} ${timePart}`;
+  const { year, month, day, hour, minute, second } = getBarTimezoneParts(date);
+  return `=DATE(${year},${month},${day})+TIME(${hour},${minute},${second})`;
 }
 
 function buildRowValues(
@@ -85,7 +128,7 @@ function buildRowValues(
     transactionId,
     formatDate(transaction.receiptDate),
     formatDate(transaction.receivedDate),
-    transaction.transactionType,
+    TRANSACTION_TYPE_LABELS[transaction.transactionType],
     transaction.category ?? '',
     transaction.vendorSource ?? '',
     transaction.description ?? '',
@@ -94,7 +137,7 @@ function buildRowValues(
     edited ? 'Edited' : 'Approved',
     SOURCE_LABELS[transaction.source],
     transaction.telegramUsername ?? transaction.telegramUserId,
-    transaction.submitterRole,
+    ROLE_LABELS[transaction.submitterRole],
     formatTimestamp(transaction.resolvedAt),
     transaction.sourceLink ?? '',
     transaction.notes ?? '',
@@ -116,11 +159,40 @@ export interface AppendRowResult {
   rowNumber: number;
 }
 
+// Thrown when appendValues (columns A-P) succeeds but the follow-up Q-column
+// Running Balance write fails — the row already exists in the Sheet, so the
+// caller must not blindly retry appendRow (that would duplicate the row) and
+// should instead retry just writeRunningBalanceFormula for this row number.
+export class PartialAppendError extends Error {
+  readonly transactionId: string;
+  readonly rowNumber: number;
+
+  constructor(transactionId: string, rowNumber: number, cause: unknown) {
+    super(
+      `appendRow: row ${rowNumber} (${transactionId}) was written to Transactions!A:P, but writing the Running Balance formula to column Q failed — retry via writeRunningBalanceFormula(sheets, spreadsheetId, ${rowNumber}), do not retry appendRow`,
+      { cause },
+    );
+    this.name = 'PartialAppendError';
+    this.transactionId = transactionId;
+    this.rowNumber = rowNumber;
+  }
+}
+
+export async function writeRunningBalanceFormula(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+  rowNumber: number,
+): Promise<void> {
+  await updateValues(sheets, spreadsheetId, `Transactions!Q${rowNumber}`, [
+    [RUNNING_BALANCE_FORMULA(rowNumber)],
+  ]);
+}
+
 // Write sequence: (1) appendValues writes columns A-P; (2) the row number is
-// only known from that response's updatedRange; (3) updateValues then writes
-// the Running Balance formula into column Q for that specific row — it can't
-// be included in the initial append because it needs its own row number
-// first.
+// only known from that response's updatedRange; (3) writeRunningBalanceFormula
+// then writes the Running Balance formula into column Q for that specific row
+// — it can't be included in the initial append because it needs its own row
+// number first.
 export async function appendRow(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
@@ -135,9 +207,11 @@ export async function appendRow(
   const appendResult = await appendValues(sheets, spreadsheetId, TRANSACTIONS_APPEND_RANGE, [row]);
   const rowNumber = parseRowNumber(appendResult.updates?.updatedRange);
 
-  await updateValues(sheets, spreadsheetId, `Transactions!Q${rowNumber}`, [
-    [RUNNING_BALANCE_FORMULA(rowNumber)],
-  ]);
+  try {
+    await writeRunningBalanceFormula(sheets, spreadsheetId, rowNumber);
+  } catch (err) {
+    throw new PartialAppendError(transactionId, rowNumber, err);
+  }
 
   return { transactionId, rowNumber };
 }

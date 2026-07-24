@@ -5,6 +5,11 @@ import { env } from '../config/env';
 import { logger } from '../lib/logger';
 import { withRetry } from '../lib/withRetry';
 
+// This block (RETRYABLE_NETWORK_CODES / isGoogleApiErrorLike / isRetryableGoogleError)
+// is generic gaxios-error classification, not Sheets-specific — Gmail (step 3) and
+// Drive (step 8) clients go through the same gaxios stack and will need byte-identical
+// logic. Extract to a shared src/lib/googleApiErrors.ts the moment the second caller
+// (gmailClient.ts) exists, rather than copy-pasting this block again.
 const RETRYABLE_NETWORK_CODES = new Set([
   'ECONNRESET',
   'ETIMEDOUT',
@@ -46,6 +51,21 @@ function withGoogleRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
   });
 }
 
+// Every googleapis call accepts a MethodOptions second argument (a GaxiosOptions,
+// including `timeout`) alongside its params — without it, a hung connection (not a
+// clean error/rejection) never settles, so withRetry's catch-based retry never runs.
+export const GOOGLE_API_TIMEOUT_MS = 10_000;
+
+async function callGoogleApi<T, R>(
+  fn: () => Promise<{ data: R }>,
+  context: string,
+  schema: z.ZodType<T>,
+  extract: (data: R) => unknown = (data) => data,
+): Promise<T> {
+  const response = await withGoogleRetry(fn, context);
+  return schema.parse(extract(response.data));
+}
+
 export function createSheetsClient(): sheets_v4.Sheets {
   const clientId = env.SHEETS_OAUTH_CLIENT_ID;
   const clientSecret = env.SHEETS_OAUTH_CLIENT_SECRET;
@@ -69,11 +89,13 @@ export async function getValues(
   spreadsheetId: string,
   range: string,
 ): Promise<(string | number)[][] | undefined> {
-  const response = await withGoogleRetry(
-    () => sheets.spreadsheets.values.get({ spreadsheetId, range }),
+  return callGoogleApi(
+    () =>
+      sheets.spreadsheets.values.get({ spreadsheetId, range }, { timeout: GOOGLE_API_TIMEOUT_MS }),
     'sheets.values.get',
+    valuesSchema,
+    (data) => data.values,
   );
-  return valuesSchema.parse(response.data.values);
 }
 
 const appendValuesResponseSchema = z.object({
@@ -97,17 +119,15 @@ export async function appendValues(
   range: string,
   values: (string | number)[][],
 ): Promise<AppendValuesResponse> {
-  const response = await withGoogleRetry(
+  return callGoogleApi(
     () =>
-      sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values },
-      }),
+      sheets.spreadsheets.values.append(
+        { spreadsheetId, range, valueInputOption: 'USER_ENTERED', requestBody: { values } },
+        { timeout: GOOGLE_API_TIMEOUT_MS },
+      ),
     'sheets.values.append',
+    appendValuesResponseSchema,
   );
-  return appendValuesResponseSchema.parse(response.data);
 }
 
 const updateValuesResponseSchema = z.object({
@@ -126,17 +146,15 @@ export async function updateValues(
   range: string,
   values: (string | number)[][],
 ): Promise<UpdateValuesResponse> {
-  const response = await withGoogleRetry(
+  return callGoogleApi(
     () =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values },
-      }),
+      sheets.spreadsheets.values.update(
+        { spreadsheetId, range, valueInputOption: 'USER_ENTERED', requestBody: { values } },
+        { timeout: GOOGLE_API_TIMEOUT_MS },
+      ),
     'sheets.values.update',
+    updateValuesResponseSchema,
   );
-  return updateValuesResponseSchema.parse(response.data);
 }
 
 const batchUpdateResponseSchema = z.object({
@@ -151,11 +169,15 @@ export async function batchUpdate(
   spreadsheetId: string,
   requests: sheets_v4.Schema$Request[],
 ): Promise<BatchUpdateResponse> {
-  const response = await withGoogleRetry(
-    () => sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }),
+  return callGoogleApi(
+    () =>
+      sheets.spreadsheets.batchUpdate(
+        { spreadsheetId, requestBody: { requests } },
+        { timeout: GOOGLE_API_TIMEOUT_MS },
+      ),
     'sheets.batchUpdate',
+    batchUpdateResponseSchema,
   );
-  return batchUpdateResponseSchema.parse(response.data);
 }
 
 const createSpreadsheetResponseSchema = z.object({
@@ -169,12 +191,13 @@ export async function createSpreadsheet(
   sheets: sheets_v4.Sheets,
   title: string,
 ): Promise<CreateSpreadsheetResponse> {
-  const response = await withGoogleRetry(
-    () => sheets.spreadsheets.create({ requestBody: { properties: { title } } }),
+  return callGoogleApi(
+    () =>
+      sheets.spreadsheets.create(
+        { requestBody: { properties: { title } } },
+        { timeout: GOOGLE_API_TIMEOUT_MS },
+      ),
     'sheets.create',
+    createSpreadsheetResponseSchema,
   );
-  return createSpreadsheetResponseSchema.parse({
-    spreadsheetId: response.data.spreadsheetId,
-    spreadsheetUrl: response.data.spreadsheetUrl,
-  });
 }

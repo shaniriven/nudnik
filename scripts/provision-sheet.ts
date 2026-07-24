@@ -35,6 +35,7 @@ const DASHBOARD_SHEET_TITLE = 'Dashboard';
 
 // A freshly created spreadsheet's first (default) sheet always has sheetId 0.
 const TRANSACTIONS_SHEET_ID = 0;
+const DASHBOARD_TITLE_ROW = 1;
 
 // Generous headroom past however many transactions accumulate over the
 // life of the sheet — data validation just needs to cover future rows.
@@ -48,11 +49,21 @@ const DROPDOWN_COLUMN_INDEX: Record<keyof typeof DROPDOWNS, number> = {
   submitterRole: 12, // M
 };
 
-function formatCellDate(date: Date): string {
+export function formatCellDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function buildDataValidationRequests(): sheets_v4.Schema$Request[] {
+function rangeString(
+  sheetName: string,
+  startCol: string,
+  startRow: number,
+  endCol: string,
+  endRow: number,
+): string {
+  return `${sheetName}!${startCol}${startRow}:${endCol}${endRow}`;
+}
+
+export function buildDataValidationRequests(): sheets_v4.Schema$Request[] {
   return (Object.keys(DROPDOWNS) as (keyof typeof DROPDOWNS)[]).map((key) => ({
     setDataValidation: {
       range: {
@@ -92,68 +103,101 @@ async function main(): Promise<void> {
     { addSheet: { properties: { title: DASHBOARD_SHEET_TITLE } } },
   ]);
 
-  await updateValues(sheets, spreadsheetId, 'Transactions!A1:Q1', [[...TRANSACTIONS_HEADERS]]);
-
-  await updateValues(sheets, spreadsheetId, 'Categories!A1:C1', [['Category', 'Type', 'Notes']]);
-  await updateValues(
-    sheets,
-    spreadsheetId,
-    `Categories!A2:C${CATEGORIES.length + 1}`,
-    CATEGORIES.map((category) => [category.name, category.type, '']),
-  );
-
-  await batchUpdate(sheets, spreadsheetId, buildDataValidationRequests());
-
   const keyMetrics = generateKeyMetricsRows();
-  await updateValues(
-    sheets,
-    spreadsheetId,
-    `Dashboard!A${DASHBOARD_BLOCK_C_START_ROW}:B${DASHBOARD_BLOCK_C_START_ROW + keyMetrics.length - 1}`,
-    keyMetrics.map((metric) => [metric.label, metric.formula]),
-  );
-
-  await updateValues(
-    sheets,
-    spreadsheetId,
-    `Dashboard!A${DASHBOARD_BLOCK_A_HEADER_ROW}:E${DASHBOARD_BLOCK_A_HEADER_ROW}`,
-    [[...DASHBOARD_BLOCK_A_HEADERS]],
-  );
-
   const now = new Date();
   const anchorMonth = new Date(now.getFullYear(), now.getMonth() - (DASHBOARD_MONTH_ROWS - 1), 1);
   const monthlySummaryRows = generateMonthlySummaryRows(anchorMonth);
-  await updateValues(
-    sheets,
-    spreadsheetId,
-    `Dashboard!A${DASHBOARD_BLOCK_A_START_ROW}:E${DASHBOARD_BLOCK_A_START_ROW + monthlySummaryRows.length - 1}`,
-    monthlySummaryRows.map((row) => [
-      formatCellDate(row.month),
-      row.incomeFormula,
-      row.expensesFormula,
-      row.netFormula,
-      row.runningBalanceFormula,
-    ]),
-  );
-
-  await updateValues(
-    sheets,
-    spreadsheetId,
-    `Dashboard!A${DASHBOARD_BLOCK_B_HEADER_ROW}:C${DASHBOARD_BLOCK_B_HEADER_ROW}`,
-    [[...DASHBOARD_BLOCK_B_HEADERS]],
-  );
-
   const categoryBreakdownRows = generateCategoryBreakdownRows();
   const firstBreakdownRow = categoryBreakdownRows[0];
   const lastBreakdownRow = categoryBreakdownRows[categoryBreakdownRows.length - 1];
   if (!firstBreakdownRow || !lastBreakdownRow) {
     throw new Error('expected at least one expense category to generate a breakdown row');
   }
-  await updateValues(
-    sheets,
-    spreadsheetId,
-    `Dashboard!A${firstBreakdownRow.row}:C${lastBreakdownRow.row}`,
-    categoryBreakdownRows.map((row) => [row.name, row.totalFormula, row.percentFormula]),
-  );
+
+  // Every write below targets a disjoint range on a sheet the structural
+  // batchUpdate above already created — safe to run concurrently rather than
+  // paying one round-trip per write.
+  await Promise.all([
+    updateValues(sheets, spreadsheetId, rangeString('Transactions', 'A', 1, 'Q', 1), [
+      [...TRANSACTIONS_HEADERS],
+    ]),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString('Categories', 'A', 1, 'C', CATEGORIES.length + 1),
+      [
+        ['Category', 'Type', 'Notes'],
+        ...CATEGORIES.map((category) => [category.name, category.type, '']),
+      ],
+    ),
+    batchUpdate(sheets, spreadsheetId, buildDataValidationRequests()),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString('Dashboard', 'A', DASHBOARD_TITLE_ROW, 'A', DASHBOARD_TITLE_ROW),
+      [[title]],
+    ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString(
+        'Dashboard',
+        'A',
+        DASHBOARD_BLOCK_C_START_ROW,
+        'B',
+        DASHBOARD_BLOCK_C_START_ROW + keyMetrics.length - 1,
+      ),
+      keyMetrics.map((metric) => [metric.label, metric.formula]),
+    ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString(
+        'Dashboard',
+        'A',
+        DASHBOARD_BLOCK_A_HEADER_ROW,
+        'E',
+        DASHBOARD_BLOCK_A_HEADER_ROW,
+      ),
+      [[...DASHBOARD_BLOCK_A_HEADERS]],
+    ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString(
+        'Dashboard',
+        'A',
+        DASHBOARD_BLOCK_A_START_ROW,
+        'E',
+        DASHBOARD_BLOCK_A_START_ROW + monthlySummaryRows.length - 1,
+      ),
+      monthlySummaryRows.map((row) => [
+        formatCellDate(row.month),
+        row.incomeFormula,
+        row.expensesFormula,
+        row.netFormula,
+        row.runningBalanceFormula,
+      ]),
+    ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString(
+        'Dashboard',
+        'A',
+        DASHBOARD_BLOCK_B_HEADER_ROW,
+        'C',
+        DASHBOARD_BLOCK_B_HEADER_ROW,
+      ),
+      [[...DASHBOARD_BLOCK_B_HEADERS]],
+    ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString('Dashboard', 'A', firstBreakdownRow.row, 'C', lastBreakdownRow.row),
+      categoryBreakdownRows.map((row) => [row.name, row.totalFormula, row.percentFormula]),
+    ),
+  ]);
 
   const url =
     created.spreadsheetUrl ?? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
@@ -161,7 +205,15 @@ async function main(): Promise<void> {
   console.log(url);
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+// Guarded so this file can be imported (e.g. by tests exercising the pure
+// helpers above) without triggering a real run against the Sheets API.
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    if (err instanceof Error && err.message.includes('SHEETS_OAUTH_')) {
+      console.error(`Configuration error: ${err.message}`);
+    } else {
+      console.error('provision-sheet failed:', err);
+    }
+    process.exitCode = 1;
+  });
+}

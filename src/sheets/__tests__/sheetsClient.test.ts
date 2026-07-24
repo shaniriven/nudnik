@@ -31,6 +31,7 @@ vi.mock('../../config/env', () => ({
     SHEETS_OAUTH_CLIENT_ID: 'test-client-id',
     SHEETS_OAUTH_CLIENT_SECRET: 'test-client-secret',
     SHEETS_OAUTH_REFRESH_TOKEN: 'test-refresh-token',
+    NODE_ENV: 'test',
   },
 }));
 
@@ -87,10 +88,10 @@ describe('getValues', () => {
       ['a', 1],
       ['b', 2],
     ]);
-    expect(mockSheetsRawClient.spreadsheets.values.get).toHaveBeenCalledWith({
-      spreadsheetId: 'sheet-id',
-      range: 'Categories!A:B',
-    });
+    expect(mockSheetsRawClient.spreadsheets.values.get).toHaveBeenCalledWith(
+      { spreadsheetId: 'sheet-id', range: 'Categories!A:B' },
+      { timeout: sheetsClient.GOOGLE_API_TIMEOUT_MS },
+    );
     expect(withRetry).toHaveBeenCalled();
   });
 
@@ -136,6 +137,7 @@ describe('appendValues', () => {
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [['TX-0001']] },
       }),
+      { timeout: sheetsClient.GOOGLE_API_TIMEOUT_MS },
     );
     expect(result.updates?.updatedRange).toBe('Transactions!A15:P15');
   });
@@ -170,6 +172,7 @@ describe('updateValues', () => {
 
     expect(mockSheetsRawClient.spreadsheets.values.update).toHaveBeenCalledWith(
       expect.objectContaining({ valueInputOption: 'USER_ENTERED' }),
+      { timeout: sheetsClient.GOOGLE_API_TIMEOUT_MS },
     );
     expect(result.updatedRange).toBe('Transactions!Q15');
   });
@@ -189,10 +192,13 @@ describe('batchUpdate', () => {
       { addSheet: { properties: { title: 'Transactions' } } },
     ]);
 
-    expect(mockSheetsRawClient.spreadsheets.batchUpdate).toHaveBeenCalledWith({
-      spreadsheetId: 'sheet-id',
-      requestBody: { requests: [{ addSheet: { properties: { title: 'Transactions' } } }] },
-    });
+    expect(mockSheetsRawClient.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+      {
+        spreadsheetId: 'sheet-id',
+        requestBody: { requests: [{ addSheet: { properties: { title: 'Transactions' } } }] },
+      },
+      { timeout: sheetsClient.GOOGLE_API_TIMEOUT_MS },
+    );
     expect(result.spreadsheetId).toBe('sheet-id');
   });
 });
@@ -209,9 +215,10 @@ describe('createSpreadsheet', () => {
 
     const result = await sheetsClient.createSpreadsheet(mockSheetsRawClient as never, 'My Sheet');
 
-    expect(mockSheetsRawClient.spreadsheets.create).toHaveBeenCalledWith({
-      requestBody: { properties: { title: 'My Sheet' } },
-    });
+    expect(mockSheetsRawClient.spreadsheets.create).toHaveBeenCalledWith(
+      { requestBody: { properties: { title: 'My Sheet' } } },
+      { timeout: sheetsClient.GOOGLE_API_TIMEOUT_MS },
+    );
     expect(result).toEqual({
       spreadsheetId: 'new-id',
       spreadsheetUrl: 'https://sheets.example/new-id',

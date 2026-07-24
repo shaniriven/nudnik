@@ -38,6 +38,10 @@ describe('RUNNING_BALANCE_FORMULA', () => {
   it('references the previous row for later rows', () => {
     expect(RUNNING_BALANCE_FORMULA(15)).toBe('=IF(D15="Income", H15, -H15) + Q14');
   });
+
+  it('throws for row 1 (reserved for headers) instead of emitting a Q0 reference', () => {
+    expect(() => RUNNING_BALANCE_FORMULA(1)).toThrow(/row 1 is reserved for headers/);
+  });
 });
 
 describe('generateKeyMetricsRows', () => {

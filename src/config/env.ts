@@ -1,9 +1,17 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
-  TEST_DATABASE_URL: z.string().url().optional(),
 
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
 
@@ -22,7 +30,7 @@ const envSchema = z.object({
 
   BAR_NAME: z.string().min(1),
   DEFAULT_CURRENCY: z.string().min(1),
-  BAR_TIMEZONE: z.string().min(1),
+  BAR_TIMEZONE: z.string().min(1).refine(isValidTimeZone, 'must be a valid IANA timezone name'),
   GMAIL_SCAN_QUERY: z.string().min(1).optional(),
 
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
