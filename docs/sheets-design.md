@@ -22,7 +22,7 @@ Handoff doc for the coding agent. Three tabs: `Transactions` (raw ledger), `Cate
 | N — Approval Date | Timestamp | When you approved it in Telegram. |
 | O — Attachment Link | URL | Link to the receipt image/email stored in Drive — critical for your accountant later. |
 | P — Notes | Text | Manual edits, corrections, disputes, original currency if non-ILS. |
-| Q — Running Balance | Formula | `=IF(D2="Income", H2, -H2) + Q1` (previous row + this row). Reflects your balance after each entry gets confirmed and logged, in insertion order — not tied to Receipt Date. The bottom row is always your true current balance. |
+| Q — Running Balance | Formula | `=IF(D{row}="Income", H{row}, -H{row}) + Q{row-1}` (previous row + this row) for every row after the first. Row 2 (the first data row) is special-cased to `+0` instead of `+Q1`, since Q1 holds the header text, not a number. Reflects your balance after each entry gets confirmed and logged, in insertion order — not tied to Receipt Date. The bottom row is always your true current balance. |
 
 ### Design decisions
 
@@ -35,15 +35,15 @@ Handoff doc for the coding agent. Three tabs: `Transactions` (raw ledger), `Cate
 | Category | Type | Notes |
 |---|---|---|
 | Bar Sales | Income | Drink/food sales rung up at the bar |
-| Event / Cover Charges | Income | Entry fees, private event bookings |
+| Event | Income | Entry fees, private event bookings |
 | Refunds Received | Income | |
 | Other Income | Income | |
-| Inventory / COGS | Expense | Cost of Goods Sold — beverages, mixers, garnishes, and any food inventory |
+| Inventory | Expense | Cost of Goods Sold — beverages, mixers, garnishes, and any food inventory |
 | Licenses & Permits | Expense | Liquor license, health permit, business license renewals |
 | Equipment & Maintenance | Expense | Glassware, taps, fridges, repairs |
-| Music / Entertainment | Expense | DJ/band fees, licensing (e.g. performance rights) |
+| Live Music / DJ | Expense | DJ/band fees, licensing (e.g. performance rights) |
 | Marketing & Ads | Expense | |
-| Software & Subscriptions | Expense | POS system, apps, tools |
+| Software | Expense | POS system, apps, tools |
 | Payment Processing Fees | Expense | Fees your card processor deducts per transaction (e.g. Tranzila, PayPlus, Cardcom) |
 | Rent & Utilities | Expense | |
 | Payroll | Expense | |
@@ -63,11 +63,11 @@ This tab has two purposes: (1) feeds the dropdown validation on `Transactions!D`
 - Net Cash Flow: `=Income - Expenses` (this month's result only)
 - Running Balance: `=Previous Running Balance + Net Cash Flow` (cumulative across all months)
 
-**Block B — Category Breakdown** (current month, or selectable period): Category | Total (ILS) | % of Total Expenses — via `SUMIFS` per category + `=Category Total / SUM(all expense totals)`.
+**Block B — Category Breakdown** (fixed current-month-vs-past-month comparison, one row per expense category): Category | Current Month (ILS) | Past Month (ILS) | % of Total Expenses — via `SUMIFS` per category per month + `=Current Month Total / SUM(all current-month expense totals)`.
 
-**Block C — Key Metrics** (single cells, top of dashboard): Current Balance, This Month Net, Avg Monthly Burn (last 3–6 months), Top 3 Expense Categories, Month-over-Month change %.
+**Block C — Key Metrics** (single cells, top of dashboard): Current Balance, This Month Net, Avg Monthly Burn (last 6 months), Top 3 Expense Categories, Month-over-Month change %.
 
-**Block D — Charts:** Net Cash Flow / Running Balance over time; Expense by Category (pie/bar); Income vs Expense per month (last 6–12 months).
+**Block D — Charts (not yet implemented):** Net Cash Flow / Running Balance over time; Expense by Category (pie/bar); Income vs Expense per month (last 6–12 months). Blocks A–C already provide the underlying data/formulas `provision-sheet.ts` needs to build these; the chart objects themselves (`batchUpdate`'s `addChart` request) are a separate, not-yet-scoped piece of work.
 
 ### Why this structure
 

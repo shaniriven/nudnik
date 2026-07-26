@@ -207,9 +207,10 @@ contract).
   larger API surface).
 - **Category Breakdown (Block B):** one row per **expense-type** entry in
   `CATEGORIES` (interpreting "% of Total Expenses" literally — income
-  categories like Bar Sales don't belong in an expense breakdown), `SUMIFS`
-  against the current month, percent = row total ÷ `SUM()` over the block's
-  fixed total-column range.
+  categories like Bar Sales don't belong in an expense breakdown), with two
+  `SUMIFS` columns per row — current month and past month — plus percent =
+  current-month row total ÷ `SUM()` over the block's fixed current-month
+  total-column range.
 
 ### sheetsClient.ts
 

@@ -25,11 +25,20 @@ export const DASHBOARD_MONTH_ROWS = 60;
 
 export const DASHBOARD_BLOCK_B_HEADERS = [
   'Category',
-  'Total (ILS)',
+  'Current Month (ILS)',
+  'Past Month (ILS)',
   '% of Total Expenses',
 ] as const;
-export const DASHBOARD_BLOCK_B_HEADER_ROW = 70;
-export const DASHBOARD_BLOCK_B_START_ROW = 71;
+// Sits beside Block A (same starting row) rather than below it, so the two
+// tables read as a side-by-side dashboard instead of a long vertical stack.
+export const DASHBOARD_BLOCK_B_HEADER_ROW = DASHBOARD_BLOCK_A_HEADER_ROW;
+export const DASHBOARD_BLOCK_B_START_ROW = DASHBOARD_BLOCK_A_START_ROW;
+export const DASHBOARD_BLOCK_B_COLS = {
+  category: 'G',
+  currentMonth: 'H',
+  pastMonth: 'I',
+  percent: 'J',
+} as const;
 
 export const CURRENT_BALANCE_FORMULA =
   '=IFERROR(INDEX(Transactions!Q2:Q, COUNTA(Transactions!Q2:Q)), 0)';
@@ -121,11 +130,13 @@ export interface MonthlySummaryRow {
   runningBalanceFormula: string;
 }
 
-// anchorMonth is the OLDEST month in the 60-row block (e.g. 59 months before
-// the provisioning date) — rows run oldest-to-newest so the most recent
-// month lands on the last row, matching the Transactions tab's
-// bottom-row-is-latest convention. Each row's Month is a literal date value,
-// not a live formula, so historical rows never shift on recalculation.
+// anchorMonth is the OLDEST month in the 60-row block. provision-sheet.ts
+// passes the provisioning month itself, so the block runs forward from
+// "now" through 59 months into the future rather than trailing history —
+// rows run oldest-to-newest so the most recent (last-generated) month lands
+// on the last row, matching the Transactions tab's bottom-row-is-latest
+// convention. Each row's Month is a literal date value, not a live formula,
+// so rows never shift on recalculation.
 export function generateMonthlySummaryRows(anchorMonth: Date): MonthlySummaryRow[] {
   const rows: MonthlySummaryRow[] = [];
   const anchorYear = anchorMonth.getFullYear();
@@ -150,9 +161,17 @@ export function generateMonthlySummaryRows(anchorMonth: Date): MonthlySummaryRow
   return rows;
 }
 
-export function categoryBreakdownTotalFormula(categoryName: string): string {
+function categoryBreakdownSumifs(categoryName: string, startExpr: string, endExpr: string): string {
   const escaped = categoryName.replace(/"/g, '""');
-  return `=SUMIFS(Transactions!H:H, Transactions!E:E, "${escaped}", Transactions!D:D, "${TRANSACTION_TYPE_LABELS.Expense}", Transactions!B:B, ">="&EOMONTH(TODAY(),-1)+1, Transactions!B:B, "<="&EOMONTH(TODAY(),0))`;
+  return `=SUMIFS(Transactions!H:H, Transactions!E:E, "${escaped}", Transactions!D:D, "${TRANSACTION_TYPE_LABELS.Expense}", Transactions!B:B, ">="&${startExpr}, Transactions!B:B, "<="&${endExpr})`;
+}
+
+export function categoryBreakdownCurrentMonthFormula(categoryName: string): string {
+  return categoryBreakdownSumifs(categoryName, 'EOMONTH(TODAY(),-1)+1', 'EOMONTH(TODAY(),0)');
+}
+
+export function categoryBreakdownPastMonthFormula(categoryName: string): string {
+  return categoryBreakdownSumifs(categoryName, 'EOMONTH(TODAY(),-2)+1', 'EOMONTH(TODAY(),-1)');
 }
 
 export function categoryBreakdownPercentFormula(
@@ -160,13 +179,15 @@ export function categoryBreakdownPercentFormula(
   blockStartRow: number,
   blockEndRow: number,
 ): string {
-  return `=IFERROR(B${row}/SUM(B${blockStartRow}:B${blockEndRow}), 0)`;
+  const col = DASHBOARD_BLOCK_B_COLS.currentMonth;
+  return `=IFERROR(${col}${row}/SUM(${col}${blockStartRow}:${col}${blockEndRow}), 0)`;
 }
 
 export interface CategoryBreakdownRow {
   row: number;
   name: string;
-  totalFormula: string;
+  currentMonthFormula: string;
+  pastMonthFormula: string;
   percentFormula: string;
 }
 
@@ -184,7 +205,8 @@ export function generateCategoryBreakdownRows(): CategoryBreakdownRow[] {
     return {
       row,
       name: category.name,
-      totalFormula: categoryBreakdownTotalFormula(category.name),
+      currentMonthFormula: categoryBreakdownCurrentMonthFormula(category.name),
+      pastMonthFormula: categoryBreakdownPastMonthFormula(category.name),
       percentFormula: categoryBreakdownPercentFormula(row, blockStartRow, blockEndRow),
     };
   });

@@ -32,3 +32,11 @@ export function getBarTimezoneParts(date: Date): BarTimezoneParts {
     second: get('second'),
   };
 }
+
+export function formatMonthLabel(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: env.BAR_TIMEZONE,
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+}

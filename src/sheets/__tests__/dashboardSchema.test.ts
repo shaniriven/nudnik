@@ -3,8 +3,9 @@ import { CATEGORIES, TRANSACTION_TYPE_LABELS } from '../sheetSchema';
 import {
   DASHBOARD_BLOCK_A_START_ROW,
   DASHBOARD_MONTH_ROWS,
+  categoryBreakdownCurrentMonthFormula,
+  categoryBreakdownPastMonthFormula,
   categoryBreakdownPercentFormula,
-  categoryBreakdownTotalFormula,
   generateCategoryBreakdownRows,
   generateKeyMetricsRows,
   generateMonthlySummaryRows,
@@ -86,8 +87,23 @@ describe('generateCategoryBreakdownRows', () => {
   });
 });
 
-describe('categoryBreakdownTotalFormula', () => {
+describe('categoryBreakdownCurrentMonthFormula', () => {
   it('escapes double quotes in category names', () => {
-    expect(categoryBreakdownTotalFormula('Odd "Name"')).toContain('Odd ""Name""');
+    expect(categoryBreakdownCurrentMonthFormula('Odd "Name"')).toContain('Odd ""Name""');
+  });
+});
+
+describe('categoryBreakdownPastMonthFormula', () => {
+  it('escapes double quotes in category names', () => {
+    expect(categoryBreakdownPastMonthFormula('Odd "Name"')).toContain('Odd ""Name""');
+  });
+
+  it('shifts the date window back one additional month from the current-month formula', () => {
+    expect(categoryBreakdownPastMonthFormula('Rent & Utilities')).toContain(
+      'EOMONTH(TODAY(),-2)+1',
+    );
+    expect(categoryBreakdownPastMonthFormula('Rent & Utilities')).toContain(
+      '<="&EOMONTH(TODAY(),-1)',
+    );
   });
 });
