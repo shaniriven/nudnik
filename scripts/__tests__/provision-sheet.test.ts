@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CATEGORIES,
+  CATEGORIES_SHEET_TITLE,
   TRANSACTION_TYPE_LABELS,
   TRANSACTIONS_HEADERS,
 } from '../../src/sheets/sheetSchema';
@@ -9,6 +10,8 @@ import {
   buildCategoriesConditionalFormatRequests,
   buildCategoriesHeaderFormatRequest,
   buildCategoryDataValidationRequest,
+  buildCreditCardPayoutsColumnWidthRequests,
+  buildCreditCardPayoutsHeaderFormatRequest,
   buildDashboardColumnWidthRequests,
   buildDashboardHeaderFormatRequests,
   buildDataValidationRequests,
@@ -37,7 +40,7 @@ describe('buildCategoryDataValidationRequest', () => {
     expect(validation?.range?.endColumnIndex).toBe(5);
     expect(validation?.rule?.condition?.type).toBe('ONE_OF_RANGE');
     expect(validation?.rule?.condition?.values?.[0]?.userEnteredValue).toMatch(
-      /^=Categories!A2:A\d+$/,
+      new RegExp(`^='${CATEGORIES_SHEET_TITLE}'!A2:A\\d+$`),
     );
   });
 });
@@ -66,7 +69,7 @@ describe('buildCategoriesHeaderFormatRequest', () => {
 });
 
 describe('buildDashboardHeaderFormatRequests', () => {
-  it('bolds and shades both Block A and Block B header rows on the given sheet', () => {
+  it('bolds and shades the Block A and Block B header rows on the given sheet', () => {
     const requests = buildDashboardHeaderFormatRequests(7);
     expect(requests).toHaveLength(2);
     for (const request of requests) {
@@ -77,6 +80,19 @@ describe('buildDashboardHeaderFormatRequests', () => {
     const blockB = requests[1];
     expect(blockB?.repeatCell?.range?.startColumnIndex).toBe(6);
     expect(blockB?.repeatCell?.range?.endColumnIndex).toBe(10);
+  });
+});
+
+describe('buildCreditCardPayoutsHeaderFormatRequest', () => {
+  it('bolds and shades the header row across all 3 columns, on the given sheet', () => {
+    const request = buildCreditCardPayoutsHeaderFormatRequest(9);
+    const range = request.repeatCell?.range;
+    expect(range?.sheetId).toBe(9);
+    expect(range?.startRowIndex).toBe(0);
+    expect(range?.endRowIndex).toBe(1);
+    expect(range?.startColumnIndex).toBe(0);
+    expect(range?.endColumnIndex).toBe(3);
+    expect(request.repeatCell?.cell?.userEnteredFormat?.textFormat?.bold).toBe(true);
   });
 });
 
@@ -160,7 +176,7 @@ describe('buildCategoriesColumnWidthRequests', () => {
 
 describe('buildDashboardColumnWidthRequests', () => {
   it('generates width requests for both Block A and Block B columns, on the given sheet', () => {
-    const requests = buildDashboardColumnWidthRequests(7);
+    const requests = buildDashboardColumnWidthRequests(7, []);
     expect(requests).toHaveLength(9); // 5 Block A columns + 4 Block B columns
     for (const request of requests) {
       expect(request.updateDimensionProperties?.range?.sheetId).toBe(7);
@@ -173,9 +189,43 @@ describe('buildDashboardColumnWidthRequests', () => {
   });
 
   it('sizes the Month column for its longest actual label, not just the "Month" header', () => {
-    const requests = buildDashboardColumnWidthRequests(7);
+    const requests = buildDashboardColumnWidthRequests(7, []);
     const monthWidth = requests[0]?.updateDimensionProperties?.properties?.pixelSize;
     expect(monthWidth).toBeGreaterThan(columnWidthForTexts(['Month']));
+  });
+
+  it('widens column A for a long Key Metrics label, not just month samples', () => {
+    const longLabel = 'שריפת מזומנים ממוצעת (6 חודשים)';
+    const withoutLabel = buildDashboardColumnWidthRequests(7, []);
+    const withLabel = buildDashboardColumnWidthRequests(7, [longLabel]);
+
+    const widthWithout = withoutLabel[0]?.updateDimensionProperties?.properties?.pixelSize;
+    const widthWith = withLabel[0]?.updateDimensionProperties?.properties?.pixelSize;
+    expect(widthWith).toBeGreaterThan(widthWithout!);
+  });
+});
+
+describe('buildCreditCardPayoutsColumnWidthRequests', () => {
+  const headers = ['Month', 'Amount - day 2', 'Amount - day 8'];
+
+  it('generates one width request per header column, on the given sheet', () => {
+    const requests = buildCreditCardPayoutsColumnWidthRequests(9, headers);
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request.updateDimensionProperties?.range?.sheetId).toBe(9);
+    }
+  });
+
+  it('sizes the Month column for its longest actual label, not just the "Month" header', () => {
+    const requests = buildCreditCardPayoutsColumnWidthRequests(9, headers);
+    const monthWidth = requests[0]?.updateDimensionProperties?.properties?.pixelSize;
+    expect(monthWidth).toBeGreaterThan(columnWidthForTexts(['Month']));
+  });
+
+  it('sizes an amount column to fit its own (longer) header text', () => {
+    const requests = buildCreditCardPayoutsColumnWidthRequests(9, headers);
+    const amountWidth = requests[1]?.updateDimensionProperties?.properties?.pixelSize;
+    expect(amountWidth).toBe(columnWidthForTexts(['Amount - day 2']));
   });
 });
 

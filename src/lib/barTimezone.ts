@@ -33,8 +33,13 @@ export function getBarTimezoneParts(date: Date): BarTimezoneParts {
   };
 }
 
+// Hebrew locale (Sasson is a Hebrew-speaking bar) — this is the one function
+// here producing Sheet-facing display text (Dashboard/Credit Card Payouts
+// Month columns), unlike getBarTimezoneParts above which only extracts
+// numeric date parts and stays locale-neutral ('en-US' guarantees Western
+// Arabic numerals for those regardless of the Gregorian calendar in use).
 export function formatMonthLabel(date: Date): string {
-  return new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat('he-IL', {
     timeZone: env.BAR_TIMEZONE,
     month: 'long',
     year: 'numeric',

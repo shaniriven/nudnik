@@ -1,6 +1,10 @@
 # Cash Flow Google Sheet — Table Design Spec
 
-Handoff doc for the coding agent. Three tabs: `Transactions` (raw ledger), `Categories` (reference/dropdowns), `Dashboard` (calculated overview).
+Handoff doc for the coding agent. Four tabs: `Transactions` (raw ledger), `Categories` (reference/dropdowns), `Dashboard` (calculated overview), `Credit Card Payouts` (twice-monthly settlement projection).
+
+### Localization
+
+Sasson is a Hebrew-speaking bar, so every tab is provisioned right-to-left with Hebrew text — tab titles, column headers, dropdown values (Income/Expense, payment methods, status, source, role), and category names are all Hebrew. This doc stays in English as the engineering reference (column order, contract, formulas); `src/sheets/sheetSchema.ts` and `src/sheets/dashboardSchema.ts` are the actual source of truth for the live Hebrew strings — read those directly rather than duplicating a translation table here. Formula function names (SUMIFS, DATE, etc.) and argument separators stay in English/standard notation regardless of language — that's governed by the spreadsheet's Locale setting (Settings → General), which is left as default; only the display text is Hebrew. That includes string literals a formula compares against (e.g. a `Type` column check) — those are Hebrew label values too, so formula examples elsewhere in this doc that show a literal like `"Income"` are illustrative English stand-ins, not the literal text written into the real Sheet.
 
 ## Tab 1: Transactions (the source of truth — one row per confirmed transaction)
 
@@ -23,6 +27,7 @@ Handoff doc for the coding agent. Three tabs: `Transactions` (raw ledger), `Cate
 | O — Attachment Link | URL | Link to the receipt image/email stored in Drive — critical for your accountant later. |
 | P — Notes | Text | Manual edits, corrections, disputes, original currency if non-ILS. |
 | Q — Running Balance | Formula | `=IF(D{row}="Income", H{row}, -H{row}) + Q{row-1}` (previous row + this row) for every row after the first. Row 2 (the first data row) is special-cased to `+0` instead of `+Q1`, since Q1 holds the header text, not a number. Reflects your balance after each entry gets confirmed and logged, in insertion order — not tied to Receipt Date. The bottom row is always your true current balance. |
+| R — Card Amount | Number | **Z-Report rows only** — blank for every other source. The card-paid portion of column H's Amount for that day's Z-report. The cash portion is never stored separately; it's always Amount minus this, derived at read time by the Credit Card Payouts tab (see Tab 4 below). Appended after Running Balance rather than inserted next to Amount/Payment Method, so no other column shifts. |
 
 ### Design decisions
 
@@ -65,9 +70,17 @@ This tab has two purposes: (1) feeds the dropdown validation on `Transactions!D`
 
 **Block B — Category Breakdown** (fixed current-month-vs-past-month comparison, one row per expense category): Category | Current Month (ILS) | Past Month (ILS) | % of Total Expenses — via `SUMIFS` per category per month + `=Current Month Total / SUM(all current-month expense totals)`.
 
-**Block C — Key Metrics** (single cells, top of dashboard): Current Balance, This Month Net, Avg Monthly Burn (last 6 months), Top 3 Expense Categories, Month-over-Month change %.
+**Block C — Key Metrics** (single cells, top of dashboard): Current Balance, This Month Net, Avg Monthly Burn (last 6 months), Top 3 Expense Categories, Month-over-Month change %, Next Expected Payout (see Tab 4 below).
 
 **Block D — Charts (not yet implemented):** Net Cash Flow / Running Balance over time; Expense by Category (pie/bar); Income vs Expense per month (last 6–12 months). Blocks A–C already provide the underlying data/formulas `provision-sheet.ts` needs to build these; the chart objects themselves (`batchUpdate`'s `addChart` request) are a separate, not-yet-scoped piece of work.
+
+## Tab 4: Credit Card Payouts (twice-monthly settlement projection)
+
+Month | Amount - day `CREDIT_CARD_PAYOUT_DAY_1` | Amount - day `CREDIT_CARD_PAYOUT_DAY_2` — one row per month, same 60-month horizon and anchor pattern as Dashboard's Block A. Its own tab rather than a Dashboard block: the payout day is fixed every month, so a per-row date column would just repeat the same two dates 60 times — dropped in favor of naming the day directly in each header, leaving just the two amount columns.
+
+Confirmed with the bar owner, each payout settles a fixed half of the *previous* calendar month (not a rolling "days since the last payout" window): `CREDIT_CARD_PAYOUT_DAY_1` pays out card sales from the 1st-15th of the previous month, `CREDIT_CARD_PAYOUT_DAY_2` pays out the 16th-end of the previous month. Each amount cell sums `Transactions!R` (`Card Amount`) over that fixed half. This period-boundary logic lives in exactly one place (`src/lib/creditCardPayout.ts`'s `payoutPeriod`), so both this tab and the Key Metrics cell below build on the same source of truth rather than re-deriving it independently.
+
+Dashboard's Block C Key Metrics carries a 6th cell, **Next Expected Payout** — re-derives which of the two upcoming payout dates is sooner directly from `TODAY()` and the two configured days, then sums the corresponding half-month period itself. It's self-contained rather than a lookup into this tab, so it stays correct even if this tab's row range ever changes.
 
 ### Why this structure
 
@@ -92,9 +105,10 @@ A Z-report is one row per day in `Transactions`, not a separate summary mechanis
 - Vendor/Source field: `Z-Report`
 - Description: e.g. "Daily Z-report – [date], X transactions"
 - Amount: the day's total from the report
+- Card Amount (col R): the card-paid portion of that total, so the twice-monthly credit-card payout can be projected on the Credit Card Payouts tab — the cash portion is never stored separately, only ever derived as Amount minus Card Amount
 
 **Z-Report is the sole source of income entries.** The email scanner realistically only ever picks up expense-side emails (supplier invoices, utility bills, subscription charges) — a bar doesn't get "order confirmation" emails for its own sales. So there's no meaningful double-counting risk: Bar Sales income comes from Z-reports only, and everything the email scanner finds stays on the expense side.
 
 ### Sheet access: admins only
 
-Only admins get view/edit access to the actual Google Sheet — workers never see it. Workers only ever interact through the Telegram bot to submit Z-reports and don't need sheet access to do that. Since workers are already excluded by design, the full sheet (or just the Dashboard tab, if vendor-level detail should stay more restricted) can be shared with admins and the accountant without needing a separate summarized copy.
+Only admins get view/edit access to the actual Google Sheet — workers never see it. Workers only ever interact through the Telegram bot to submit Z-reports and don't need sheet access to do that. Since workers are already excluded by design, the full sheet (or just the Dashboard/Credit Card Payouts tabs, if vendor-level detail should stay more restricted) can be shared with admins and the accountant without needing a separate summarized copy.

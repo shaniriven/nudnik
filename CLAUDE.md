@@ -46,7 +46,7 @@ to correctness bugs:
   letters, category names, thresholds, error codes) belong in a named constant or
   enum, not inlined. Any string that must match a Sheet-facing value should trace
   back to a single source (e.g. `sheetSchema.ts`'s `DROPDOWNS`, or the
-  `SOURCE_LABELS`/`PAYMENT_METHOD_LABELS` maps in `ledgerWriter.ts`), not be
+  `SOURCE_LABELS`/`PAYMENT_METHOD_LABELS` maps in `sheetSchema.ts`), not be
   retyped at each call site.
 - **Bypasses** — skipped validation, disabled lint/type rules (`@ts-ignore`/`any`
   without a justifying comment), `--no-verify`, catch-and-ignore error handling,

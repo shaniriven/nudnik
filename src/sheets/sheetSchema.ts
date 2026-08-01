@@ -7,59 +7,79 @@
 
 import type { PaymentMethod, Role, TransactionSource, TransactionType } from '@prisma/client';
 
+// The single source of truth for these two tab titles — ledgerWriter.ts,
+// categoriesReader.ts, dashboardSchema.ts, and provision-sheet.ts all build
+// cross-sheet formula/range references off these constants rather than
+// retyping the literal name, so renaming a tab is a one-line change instead
+// of a silent breakage hunt. (Dashboard/Credit Card Payouts tab titles have
+// no cross-file reference like this — nothing outside provision-sheet.ts
+// ever points a formula at them by name — so they stay local to that file.)
+export const TRANSACTIONS_SHEET_TITLE = 'תנועות';
+export const CATEGORIES_SHEET_TITLE = 'קטגוריות';
+
+// Sheet-facing text is Hebrew throughout (Sasson is a Hebrew-speaking bar).
+// Column order/meaning matches docs/sheets-design.md's Tab 1 table — refer
+// there for the English name of each column. Formulas (SUMIFS/DATE/etc.)
+// stay in English function names regardless of this — that's governed by
+// the spreadsheet's Locale setting, not by this file.
 export const TRANSACTIONS_HEADERS = [
-  'Transaction ID',
-  'Receipt Date',
-  'Received Date',
-  'Type',
-  'Category',
-  'Vendor / Source',
-  'Description',
-  'Amount',
-  'Payment Method',
-  'Status',
-  'Source',
-  'Submitted By',
-  'Submitter Role',
-  'Approval Date',
-  'Attachment Link',
-  'Notes',
-  'Running Balance',
+  'מספר עסקה',
+  'תאריך קבלה',
+  'תאריך קליטה',
+  'סוג',
+  'קטגוריה',
+  'ספק/לקוח',
+  'תיאור',
+  'סכום',
+  'אמצעי תשלום',
+  'סטטוס',
+  'מקור',
+  'אושר על ידי',
+  'תפקיד המאשר',
+  'תאריך אישור',
+  'קישור',
+  'הערות',
+  'יתרה מצטברת',
+  // Z-Report rows only: card portion of column H's Amount. Blank for every
+  // other source. Cash portion is never stored — it's Amount minus this,
+  // derived at read time. Appended after Running Balance (not inserted
+  // next to Amount/Payment Method) so no other column letter ever shifts.
+  'סכום באשראי',
 ] as const;
 
 // Prisma's @map only changes the DB value, not the client's runtime enum
 // value, so each of these maps a Prisma enum member to its exact Sheet label.
 export const TRANSACTION_TYPE_LABELS = {
-  Income: 'Income',
-  Expense: 'Expense',
+  Income: 'הכנסה',
+  Expense: 'הוצאה',
 } as const satisfies Record<TransactionType, string>;
 
 export const PAYMENT_METHOD_LABELS = {
-  CreditCard: 'Credit Card',
-  BankTransfer: 'Bank Transfer',
-  Cash: 'Cash',
-  Bit: 'Bit',
-  PayPal: 'PayPal',
-  Other: 'Other',
+  CreditCard: 'כרטיס אשראי',
+  BankTransfer: 'העברה בנקאית',
+  Cash: 'מזומן',
+  Bit: 'ביט',
+  PayPal: 'PayPal', // brand name, left in Latin script
+  Other: 'אחר',
 } as const satisfies Record<PaymentMethod, string>;
 
 export const SOURCE_LABELS = {
-  Email: 'Email',
-  TelegramPhoto: 'Telegram Photo',
-  Manual: 'Manual',
-  ZReport: 'Z-Report',
+  Email: 'אימייל',
+  TelegramPhoto: 'תמונת טלגרם',
+  Manual: 'ידני',
+  ZReport: 'דוח Z',
 } as const satisfies Record<TransactionSource, string>;
 
 export const ROLE_LABELS = {
-  Admin: 'Admin',
-  Worker: 'Worker',
+  Admin: 'מנהל',
+  Worker: 'עובד',
 } as const satisfies Record<Role, string>;
 
 // No backing Prisma enum — Sheet Status is derived from the `edited` boolean
 // at write time (see ledgerWriter.ts), not a stored column.
 export enum TransactionStatus {
-  Approved = 'Approved',
-  Edited = 'Edited',
+  Approved = 'מאושר',
+  Edited = 'ערוך',
 }
 
 function labelValues<T extends Record<string, string>>(labels: T): readonly T[keyof T][] {
@@ -74,34 +94,43 @@ export const DROPDOWNS = {
   submitterRole: labelValues(ROLE_LABELS),
 } as const;
 
+// The Sheet-facing label value (e.g. 'הכנסה'), not the Prisma TransactionType
+// enum member — CategorySeed.type is written to and compared against the
+// Sheet's Type column, which only ever holds label text. Coincidentally
+// equal to TransactionType while labels were still the English enum member
+// names; Hebrew labels made that coincidence visible as a type error.
+export type CategoryTypeLabel =
+  (typeof TRANSACTION_TYPE_LABELS)[keyof typeof TRANSACTION_TYPE_LABELS];
+
 export interface CategorySeed {
   name: string;
-  type: TransactionType;
+  type: CategoryTypeLabel;
 }
 
 // Seed data only — consumed exclusively by provision-sheet.ts to populate a
 // freshly created Sheet's Categories tab. Categories are read live from the
 // Sheet at runtime everywhere else (see CLAUDE.md working rules); this list
 // is free to drift from the live tab after provisioning, that's expected.
+// Order/meaning matches docs/sheets-design.md's Tab 2 table.
 export const CATEGORIES: readonly CategorySeed[] = [
-  { name: 'Bar Sales', type: TRANSACTION_TYPE_LABELS.Income },
-  { name: 'Event', type: TRANSACTION_TYPE_LABELS.Income },
-  { name: 'Refunds Received', type: TRANSACTION_TYPE_LABELS.Income },
-  { name: 'Other Income', type: TRANSACTION_TYPE_LABELS.Income },
-  { name: 'Inventory', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Licenses & Permits', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Equipment & Maintenance', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Live Music / DJ', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Marketing & Ads', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Software', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Payment Processing Fees', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Rent & Utilities', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Payroll', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Taxes', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Professional Services', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Bank Fees', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Cleaning & Supplies', type: TRANSACTION_TYPE_LABELS.Expense },
-  { name: 'Other Expense', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'מכירות בר', type: TRANSACTION_TYPE_LABELS.Income },
+  { name: 'אירוע', type: TRANSACTION_TYPE_LABELS.Income },
+  { name: 'החזרים שהתקבלו', type: TRANSACTION_TYPE_LABELS.Income },
+  { name: 'הכנסה אחרת', type: TRANSACTION_TYPE_LABELS.Income },
+  { name: 'מלאי', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'רישיונות והיתרים', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'ציוד ותחזוקה', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'מוזיקה חיה / תקליטן', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'שיווק ופרסום', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'תוכנה', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'עמלות סליקה', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'שכירות וחשבונות', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'שכר עבודה', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'מיסים', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'שירותים מקצועיים', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'עמלות בנק', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'ניקיון וחומרים מתכלים', type: TRANSACTION_TYPE_LABELS.Expense },
+  { name: 'הוצאה אחרת', type: TRANSACTION_TYPE_LABELS.Expense },
 ];
 
 // Special-cased for row 2 (first data row): Q1 holds the header text, not a
@@ -116,5 +145,5 @@ export function RUNNING_BALANCE_FORMULA(row: number): string {
     );
   }
   const previousBalance = row === 2 ? '0' : `Q${row - 1}`;
-  return `=IF(D${row}="Income", H${row}, -H${row}) + ${previousBalance}`;
+  return `=IF(D${row}="${TRANSACTION_TYPE_LABELS.Income}", H${row}, -H${row}) + ${previousBalance}`;
 }

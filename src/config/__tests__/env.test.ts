@@ -75,4 +75,54 @@ describe('parseEnv', () => {
     expect(result.DATABASE_URL).toBe(validEnv.DATABASE_URL);
     expect(result.TELEGRAM_BOT_TOKEN).toBeUndefined();
   });
+
+  it('coerces CREDIT_CARD_PAYOUT_DAY_1/2 to numbers when present', () => {
+    const result = parseEnv({
+      ...validEnv,
+      CREDIT_CARD_PAYOUT_DAY_1: '2',
+      CREDIT_CARD_PAYOUT_DAY_2: '8',
+    });
+    expect(result.CREDIT_CARD_PAYOUT_DAY_1).toBe(2);
+    expect(result.CREDIT_CARD_PAYOUT_DAY_2).toBe(8);
+  });
+
+  it('allows CREDIT_CARD_PAYOUT_DAY_1/2 to be omitted (not configured yet)', () => {
+    const result = parseEnv(validEnv);
+    expect(result.CREDIT_CARD_PAYOUT_DAY_1).toBeUndefined();
+    expect(result.CREDIT_CARD_PAYOUT_DAY_2).toBeUndefined();
+  });
+
+  it('treats a blank CREDIT_CARD_PAYOUT_DAY_1/2 the same as omitted, not zero', () => {
+    const result = parseEnv({
+      ...validEnv,
+      CREDIT_CARD_PAYOUT_DAY_1: '',
+      CREDIT_CARD_PAYOUT_DAY_2: '',
+    });
+    expect(result.CREDIT_CARD_PAYOUT_DAY_1).toBeUndefined();
+    expect(result.CREDIT_CARD_PAYOUT_DAY_2).toBeUndefined();
+  });
+
+  it('rejects an out-of-range CREDIT_CARD_PAYOUT_DAY', () => {
+    const broken: NodeJS.ProcessEnv = { ...validEnv, CREDIT_CARD_PAYOUT_DAY_1: '32' };
+    expect(() => parseEnv(broken)).toThrow(/CREDIT_CARD_PAYOUT_DAY_1/);
+  });
+
+  it('rejects CREDIT_CARD_PAYOUT_DAY_1 set without CREDIT_CARD_PAYOUT_DAY_2', () => {
+    const broken: NodeJS.ProcessEnv = { ...validEnv, CREDIT_CARD_PAYOUT_DAY_1: '2' };
+    expect(() => parseEnv(broken)).toThrow(/must both be set or both be omitted/);
+  });
+
+  it('rejects CREDIT_CARD_PAYOUT_DAY_2 set without CREDIT_CARD_PAYOUT_DAY_1', () => {
+    const broken: NodeJS.ProcessEnv = { ...validEnv, CREDIT_CARD_PAYOUT_DAY_2: '8' };
+    expect(() => parseEnv(broken)).toThrow(/must both be set or both be omitted/);
+  });
+
+  it('rejects CREDIT_CARD_PAYOUT_DAY_1 and CREDIT_CARD_PAYOUT_DAY_2 set to the same day', () => {
+    const broken: NodeJS.ProcessEnv = {
+      ...validEnv,
+      CREDIT_CARD_PAYOUT_DAY_1: '2',
+      CREDIT_CARD_PAYOUT_DAY_2: '2',
+    };
+    expect(() => parseEnv(broken)).toThrow(/must not be the same day/);
+  });
 });

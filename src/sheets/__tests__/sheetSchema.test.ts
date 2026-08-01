@@ -40,63 +40,68 @@ describe('label maps', () => {
   // in any Sheet-facing label fails a test instead of silently reaching the
   // Sheet's dropdown validation.
   it('TRANSACTION_TYPE_LABELS matches the Sheet-facing values exactly', () => {
-    expect(TRANSACTION_TYPE_LABELS).toEqual({ Income: 'Income', Expense: 'Expense' });
+    expect(TRANSACTION_TYPE_LABELS).toEqual({ Income: 'הכנסה', Expense: 'הוצאה' });
   });
 
   it('PAYMENT_METHOD_LABELS matches the Sheet-facing values exactly', () => {
     expect(PAYMENT_METHOD_LABELS).toEqual({
-      CreditCard: 'Credit Card',
-      BankTransfer: 'Bank Transfer',
-      Cash: 'Cash',
-      Bit: 'Bit',
+      CreditCard: 'כרטיס אשראי',
+      BankTransfer: 'העברה בנקאית',
+      Cash: 'מזומן',
+      Bit: 'ביט',
       PayPal: 'PayPal',
-      Other: 'Other',
+      Other: 'אחר',
     });
   });
 
   it('SOURCE_LABELS matches the Sheet-facing values exactly', () => {
     expect(SOURCE_LABELS).toEqual({
-      Email: 'Email',
-      TelegramPhoto: 'Telegram Photo',
-      Manual: 'Manual',
-      ZReport: 'Z-Report',
+      Email: 'אימייל',
+      TelegramPhoto: 'תמונת טלגרם',
+      Manual: 'ידני',
+      ZReport: 'דוח Z',
     });
   });
 
   it('ROLE_LABELS matches the Sheet-facing values exactly', () => {
-    expect(ROLE_LABELS).toEqual({ Admin: 'Admin', Worker: 'Worker' });
+    expect(ROLE_LABELS).toEqual({ Admin: 'מנהל', Worker: 'עובד' });
   });
 
   it('TransactionStatus matches the Sheet-facing values exactly', () => {
-    expect(TransactionStatus.Approved).toBe('Approved');
-    expect(TransactionStatus.Edited).toBe('Edited');
+    expect(TransactionStatus.Approved).toBe('מאושר');
+    expect(TransactionStatus.Edited).toBe('ערוך');
   });
 });
 
 describe('TRANSACTIONS_HEADERS', () => {
-  it('has exactly 17 headers (columns A through Q) in the spec order', () => {
-    expect(TRANSACTIONS_HEADERS).toHaveLength(17);
-    expect(TRANSACTIONS_HEADERS[0]).toBe('Transaction ID');
-    expect(TRANSACTIONS_HEADERS[7]).toBe('Amount');
-    expect(TRANSACTIONS_HEADERS[16]).toBe('Running Balance');
+  it('has exactly 18 headers (columns A through R) in the spec order', () => {
+    expect(TRANSACTIONS_HEADERS).toHaveLength(18);
+    expect(TRANSACTIONS_HEADERS[0]).toBe('מספר עסקה');
+    expect(TRANSACTIONS_HEADERS[7]).toBe('סכום');
+    expect(TRANSACTIONS_HEADERS[16]).toBe('יתרה מצטברת');
+    expect(TRANSACTIONS_HEADERS[17]).toBe('סכום באשראי');
   });
 });
 
 describe('CATEGORIES', () => {
   it('has 18 entries split 4 Income / 14 Expense', () => {
     expect(CATEGORIES).toHaveLength(18);
-    expect(CATEGORIES.filter((c) => c.type === 'Income')).toHaveLength(4);
-    expect(CATEGORIES.filter((c) => c.type === 'Expense')).toHaveLength(14);
+    expect(CATEGORIES.filter((c) => c.type === TRANSACTION_TYPE_LABELS.Income)).toHaveLength(4);
+    expect(CATEGORIES.filter((c) => c.type === TRANSACTION_TYPE_LABELS.Expense)).toHaveLength(14);
   });
 });
 
 describe('RUNNING_BALANCE_FORMULA', () => {
   it('special-cases row 2 (first data row) to +0 instead of +Q1', () => {
-    expect(RUNNING_BALANCE_FORMULA(2)).toBe('=IF(D2="Income", H2, -H2) + 0');
+    expect(RUNNING_BALANCE_FORMULA(2)).toBe(
+      `=IF(D2="${TRANSACTION_TYPE_LABELS.Income}", H2, -H2) + 0`,
+    );
   });
 
   it('references the previous row for later rows', () => {
-    expect(RUNNING_BALANCE_FORMULA(15)).toBe('=IF(D15="Income", H15, -H15) + Q14');
+    expect(RUNNING_BALANCE_FORMULA(15)).toBe(
+      `=IF(D15="${TRANSACTION_TYPE_LABELS.Income}", H15, -H15) + Q14`,
+    );
   });
 
   it('throws for row 1 (reserved for headers) instead of emitting a Q0 reference', () => {

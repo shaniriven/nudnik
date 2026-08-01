@@ -1,5 +1,5 @@
 import type { sheets_v4 } from 'googleapis';
-import { Role, type PendingTransaction } from '@prisma/client';
+import { Role, TransactionSource, type PendingTransaction } from '@prisma/client';
 import { z } from 'zod';
 import { getBarTimezoneParts } from '../lib/barTimezone';
 import {
@@ -8,19 +8,34 @@ import {
   RUNNING_BALANCE_FORMULA,
   SOURCE_LABELS,
   TransactionStatus,
+  TRANSACTIONS_SHEET_TITLE,
   TRANSACTION_TYPE_LABELS,
 } from './sheetSchema';
 import { appendValues, updateValues } from './sheetsClient';
 
-const TRANSACTIONS_APPEND_RANGE = 'Transactions!A:P';
+// Spans through R (Card Amount) even though Q (Running Balance) is written
+// separately below — appendValues just writes an empty Q cell here, which
+// writeRunningBalanceFormula then overwrites once the row number is known.
+const TRANSACTIONS_APPEND_RANGE = `'${TRANSACTIONS_SHEET_TITLE}'!A:R`;
 
-const writeInvariantsSchema = z.object({
-  category: z.string().min(1),
-  amount: z.number(),
-  resolvedAt: z.date(),
-  receivedDate: z.date(),
-  submitterRole: z.nativeEnum(Role),
-});
+const writeInvariantsSchema = z
+  .object({
+    category: z.string().min(1),
+    amount: z.number(),
+    resolvedAt: z.date(),
+    receivedDate: z.date(),
+    submitterRole: z.nativeEnum(Role),
+    source: z.nativeEnum(TransactionSource),
+    cardAmount: z.number().optional(),
+  })
+  .refine((v) => v.cardAmount === undefined || (v.cardAmount >= 0 && v.cardAmount <= v.amount), {
+    message: 'cardAmount must be between 0 and amount',
+    path: ['cardAmount'],
+  })
+  .refine((v) => v.cardAmount === undefined || v.source === TransactionSource.ZReport, {
+    message: 'cardAmount may only be set on a Z-Report transaction',
+    path: ['cardAmount'],
+  });
 
 // appendRow is only ever called post-confirm, but the Prisma model has
 // category/resolvedAt nullable at the type level — this is a real boundary
@@ -32,6 +47,8 @@ function assertWritable(transaction: PendingTransaction): void {
     resolvedAt: transaction.resolvedAt ?? undefined,
     receivedDate: transaction.receivedDate,
     submitterRole: transaction.submitterRole,
+    source: transaction.source,
+    cardAmount: transaction.cardAmount?.toNumber() ?? undefined,
   });
 }
 
@@ -78,10 +95,12 @@ function buildRowValues(
     formatTimestamp(transaction.resolvedAt),
     transaction.sourceLink ?? '',
     transaction.notes ?? '',
+    '', // Q — Running Balance, filled in by writeRunningBalanceFormula below
+    transaction.cardAmount?.toNumber() ?? '',
   ];
 }
 
-// Parses the row number out of an updatedRange like "Transactions!A15:P15".
+// Parses the row number out of an updatedRange like "Transactions!A15:R15".
 function parseRowNumber(updatedRange: string | undefined): number {
   const match = updatedRange ? /![A-Z]+(\d+):[A-Z]+\d+$/.exec(updatedRange) : null;
   const rowGroup = match?.[1];
@@ -96,7 +115,7 @@ export interface AppendRowResult {
   rowNumber: number;
 }
 
-// Thrown when appendValues (columns A-P) succeeds but the follow-up Q-column
+// Thrown when appendValues (columns A:R) succeeds but the follow-up Q-column
 // Running Balance write fails — the row already exists in the Sheet, so the
 // caller must not blindly retry appendRow (that would duplicate the row) and
 // should instead retry just writeRunningBalanceFormula for this row number.
@@ -106,7 +125,7 @@ export class PartialAppendError extends Error {
 
   constructor(transactionId: string, rowNumber: number, cause: unknown) {
     super(
-      `appendRow: row ${rowNumber} (${transactionId}) was written to Transactions!A:P, but writing the Running Balance formula to column Q failed — retry via writeRunningBalanceFormula(sheets, spreadsheetId, ${rowNumber}), do not retry appendRow`,
+      `appendRow: row ${rowNumber} (${transactionId}) was written to ${TRANSACTIONS_SHEET_TITLE}!A:R, but writing the Running Balance formula to column Q failed — retry via writeRunningBalanceFormula(sheets, spreadsheetId, ${rowNumber}), do not retry appendRow`,
       { cause },
     );
     this.name = 'PartialAppendError';
@@ -120,12 +139,12 @@ export async function writeRunningBalanceFormula(
   spreadsheetId: string,
   rowNumber: number,
 ): Promise<void> {
-  await updateValues(sheets, spreadsheetId, `Transactions!Q${rowNumber}`, [
+  await updateValues(sheets, spreadsheetId, `'${TRANSACTIONS_SHEET_TITLE}'!Q${rowNumber}`, [
     [RUNNING_BALANCE_FORMULA(rowNumber)],
   ]);
 }
 
-// Write sequence: (1) appendValues writes columns A-P; (2) the row number is
+// Write sequence: (1) appendValues writes columns A:R; (2) the row number is
 // only known from that response's updatedRange; (3) writeRunningBalanceFormula
 // then writes the Running Balance formula into column Q for that specific row
 // — it can't be included in the initial append because it needs its own row

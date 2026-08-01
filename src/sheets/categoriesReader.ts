@@ -1,12 +1,13 @@
 import type { sheets_v4 } from 'googleapis';
 import { z } from 'zod';
+import { CATEGORIES_SHEET_TITLE, TRANSACTION_TYPE_LABELS } from './sheetSchema';
 import { getValues } from './sheetsClient';
 
-const CATEGORIES_RANGE = 'Categories!A2:B';
+const CATEGORIES_RANGE = `'${CATEGORIES_SHEET_TITLE}'!A2:B`;
 
 const categorySchema = z.object({
   name: z.string().min(1),
-  type: z.enum(['Income', 'Expense']),
+  type: z.enum([TRANSACTION_TYPE_LABELS.Income, TRANSACTION_TYPE_LABELS.Expense]),
 });
 
 export type Category = z.infer<typeof categorySchema>;
@@ -30,13 +31,14 @@ export async function getCategories(
 
   const rows = await getValues(sheets, spreadsheetId, CATEGORIES_RANGE);
   const categories = (rows ?? [])
-    .filter((row) => row.length > 0)
-    .map((row, index) => {
+    .map((row, index) => ({ row, sheetRow: index + 2 }))
+    .filter(({ row }) => row.length > 0)
+    .map(({ row, sheetRow }) => {
       const [name, type] = row;
       const result = categorySchema.safeParse({ name, type });
       if (!result.success) {
         throw new Error(
-          `Categories!A${index + 2} ("${String(name ?? '')}") is invalid: expected Type to be "Income" or "Expense", got ${String(type ?? '(empty)')}`,
+          `${CATEGORIES_SHEET_TITLE}!A${sheetRow} ("${String(name ?? '')}") is invalid: expected Type to be "${TRANSACTION_TYPE_LABELS.Income}" or "${TRANSACTION_TYPE_LABELS.Expense}", got ${String(type ?? '(empty)')}`,
         );
       }
       return result.data;

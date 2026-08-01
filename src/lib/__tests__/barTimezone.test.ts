@@ -14,7 +14,7 @@ describe('getBarTimezoneParts', () => {
 });
 
 describe('formatMonthLabel', () => {
-  it('formats a date as full month name + year, in the bar timezone', () => {
-    expect(formatMonthLabel(new Date('2026-07-01T00:00:00Z'))).toBe('July 2026');
+  it('formats a date as full month name + year (Hebrew), in the bar timezone', () => {
+    expect(formatMonthLabel(new Date('2026-07-01T00:00:00Z'))).toBe('יולי 2026');
   });
 });

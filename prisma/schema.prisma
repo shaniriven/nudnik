@@ -74,6 +74,7 @@ model PendingTransaction {
   description       String? // col G
   amount            Decimal // single ILS figure (col H) — non-ILS handled via notes
   paymentMethod     PaymentMethod?           @map("payment_method")
+  cardAmount        Decimal?                 @map("card_amount") // Z-Report only: card portion of `amount` (col R); cash portion is `amount - cardAmount`, never stored separately
   notes             String? // original currency/amount if non-ILS, corrections (col P)
   sourceLink        String?                  @map("source_link") // Gmail permalink or Drive file link (col O)
   telegramUserId    String                   @map("telegram_user_id") // who is confirming (→ col L, Submitted By)

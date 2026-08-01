@@ -1,7 +1,7 @@
-// Creates a fresh 3-tab Nudnik spreadsheet (Transactions / Categories /
-// Dashboard) from sheetSchema.ts and dashboardSchema.ts — bar-agnostic,
-// reusable for any bar by rerunning against a different BAR_NAME /
-// CATEGORIES list.
+// Creates a fresh 4-tab Nudnik spreadsheet (Transactions / Categories /
+// Dashboard / Credit Card Payouts) from sheetSchema.ts and
+// dashboardSchema.ts — bar-agnostic, reusable for any bar by rerunning
+// against a different BAR_NAME / CATEGORIES list.
 //
 // Not executed as part of step 2's implementation (no real OAuth
 // credentials yet) — see docs/steps/02-sheets-writer.md "Manual steps".
@@ -11,22 +11,32 @@ import { z } from 'zod';
 import { env } from '../src/config/env';
 import { formatMonthLabel } from '../src/lib/barTimezone';
 import {
+  CREDIT_CARD_PAYOUTS_COLS,
+  CREDIT_CARD_PAYOUTS_END_ROW,
+  CREDIT_CARD_PAYOUTS_HEADER_ROW,
+  CREDIT_CARD_PAYOUTS_START_ROW,
   DASHBOARD_BLOCK_A_HEADER_ROW,
   DASHBOARD_BLOCK_A_HEADERS,
   DASHBOARD_BLOCK_A_START_ROW,
   DASHBOARD_BLOCK_B_COLS,
   DASHBOARD_BLOCK_B_HEADER_ROW,
   DASHBOARD_BLOCK_B_HEADERS,
+  DASHBOARD_BLOCK_C_COLS,
   DASHBOARD_BLOCK_C_START_ROW,
   generateCategoryBreakdownRows,
+  generateCreditCardPayoutHeaders,
+  generateCreditCardPayoutRows,
   generateKeyMetricsRows,
   generateMonthlySummaryRows,
+  generateNextPayoutMetricRow,
 } from '../src/sheets/dashboardSchema';
 import {
   CATEGORIES,
+  CATEGORIES_SHEET_TITLE,
   DROPDOWNS,
-  TRANSACTION_TYPE_LABELS,
   TRANSACTIONS_HEADERS,
+  TRANSACTIONS_SHEET_TITLE,
+  TRANSACTION_TYPE_LABELS,
 } from '../src/sheets/sheetSchema';
 import {
   batchUpdate,
@@ -35,9 +45,16 @@ import {
   updateValues,
 } from '../src/sheets/sheetsClient';
 
-const TRANSACTIONS_SHEET_TITLE = 'Transactions';
-const CATEGORIES_SHEET_TITLE = 'Categories';
-const DASHBOARD_SHEET_TITLE = 'Dashboard';
+// Dashboard/Credit Card Payouts titles have no cross-file reference (see
+// sheetSchema.ts's comment on TRANSACTIONS_SHEET_TITLE/CATEGORIES_SHEET_TITLE),
+// so they stay local to this file rather than living in sheetSchema.ts too.
+const DASHBOARD_SHEET_TITLE = 'לוח בקרה';
+const CREDIT_CARD_PAYOUTS_SHEET_TITLE = 'תשלומי סליקה';
+
+// Single source for the Categories tab's own header row — used both when
+// writing it and when sizing its columns, so the two can never drift apart
+// (see buildCategoriesColumnWidthRequests).
+const CATEGORIES_HEADERS = ['קטגוריה', 'סוג', 'הערות'] as const;
 
 // A freshly created spreadsheet's first (default) sheet always has sheetId 0.
 const TRANSACTIONS_SHEET_ID = 0;
@@ -86,6 +103,8 @@ export function columnWidthForTexts(texts: readonly string[]): number {
   return Math.max(MIN_COLUMN_WIDTH_PX, longest * CHAR_WIDTH_PX + COLUMN_PADDING_PX);
 }
 
+// Single-quoted unconditionally — required for sheet names containing
+// spaces (e.g. "Credit Card Payouts"), harmless for single-word names.
 function rangeString(
   sheetName: string,
   startCol: string,
@@ -93,7 +112,7 @@ function rangeString(
   endCol: string,
   endRow: number,
 ): string {
-  return `${sheetName}!${startCol}${startRow}:${endCol}${endRow}`;
+  return `'${sheetName}'!${startCol}${startRow}:${endCol}${endRow}`;
 }
 
 function columnIndex(letter: string): number {
@@ -152,7 +171,11 @@ export function buildCategoryDataValidationRequest(): sheets_v4.Schema$Request {
       rule: {
         condition: {
           type: 'ONE_OF_RANGE',
-          values: [{ userEnteredValue: `=Categories!A2:A${CATEGORIES_DROPDOWN_LAST_ROW}` }],
+          values: [
+            {
+              userEnteredValue: `=${rangeString(CATEGORIES_SHEET_TITLE, 'A', 2, 'A', CATEGORIES_DROPDOWN_LAST_ROW)}`,
+            },
+          ],
         },
         strict: true,
         showCustomUi: true,
@@ -191,7 +214,20 @@ export function buildCategoriesHeaderFormatRequest(sheetId: number): sheets_v4.S
     startRowIndex: 0,
     endRowIndex: 1,
     startColumnIndex: 0,
-    endColumnIndex: 3, // Category, Type, Notes
+    endColumnIndex: CATEGORIES_HEADERS.length,
+  });
+}
+
+// The Key Metrics block (Block C) has no natural header row of its own —
+// its title (row 1) gets the same bold+shaded treatment as every other
+// table's header, so it visually reads as a table too rather than plain text.
+export function buildKeyMetricsHeaderFormatRequest(sheetId: number): sheets_v4.Schema$Request {
+  return buildHeaderFormatRequest({
+    sheetId,
+    startRowIndex: DASHBOARD_TITLE_ROW - 1,
+    endRowIndex: DASHBOARD_TITLE_ROW,
+    startColumnIndex: columnIndex(DASHBOARD_BLOCK_C_COLS.label),
+    endColumnIndex: columnIndex(DASHBOARD_BLOCK_C_COLS.value) + 1,
   });
 }
 
@@ -212,6 +248,40 @@ export function buildDashboardHeaderFormatRequests(sheetId: number): sheets_v4.S
       endColumnIndex: columnIndex(DASHBOARD_BLOCK_B_COLS.percent) + 1,
     }),
   ];
+}
+
+export function buildCreditCardPayoutsHeaderFormatRequest(
+  sheetId: number,
+): sheets_v4.Schema$Request {
+  return buildHeaderFormatRequest({
+    sheetId,
+    startRowIndex: CREDIT_CARD_PAYOUTS_HEADER_ROW - 1,
+    endRowIndex: CREDIT_CARD_PAYOUTS_HEADER_ROW,
+    startColumnIndex: columnIndex(CREDIT_CARD_PAYOUTS_COLS.month),
+    endColumnIndex: columnIndex(CREDIT_CARD_PAYOUTS_COLS.payout2Amount) + 1,
+  });
+}
+
+// Block B's percent column holds a raw fraction (e.g. 0.23) — displayed
+// as a plain decimal rounded to 2 places, not a "23%" percent format.
+export function buildCategoryBreakdownPercentFormatRequest(
+  sheetId: number,
+  firstDataRow: number,
+  lastDataRow: number,
+): sheets_v4.Schema$Request {
+  return {
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex: firstDataRow - 1,
+        endRowIndex: lastDataRow,
+        startColumnIndex: columnIndex(DASHBOARD_BLOCK_B_COLS.percent),
+        endColumnIndex: columnIndex(DASHBOARD_BLOCK_B_COLS.percent) + 1,
+      },
+      cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '0.00' } } },
+      fields: 'userEnteredFormat.numberFormat',
+    },
+  };
 }
 
 // One custom-formula conditional format rule per Type value, tinting the
@@ -288,7 +358,7 @@ export function buildCategoriesConditionalFormatRequests(
       startRowIndex: 1,
       endRowIndex: CATEGORIES.length + 1,
       startColumnIndex: 0,
-      endColumnIndex: 3,
+      endColumnIndex: CATEGORIES_HEADERS.length,
     },
     'B',
     2,
@@ -321,9 +391,9 @@ export function buildTransactionsColumnWidthRequests(): sheets_v4.Schema$Request
 
 export function buildCategoriesColumnWidthRequests(sheetId: number): sheets_v4.Schema$Request[] {
   const widths = [
-    columnWidthForTexts(['Category', ...CATEGORIES.map((category) => category.name)]),
-    columnWidthForTexts(['Type', ...CATEGORIES.map((category) => category.type)]),
-    columnWidthForTexts(['Notes']),
+    columnWidthForTexts([CATEGORIES_HEADERS[0], ...CATEGORIES.map((category) => category.name)]),
+    columnWidthForTexts([CATEGORIES_HEADERS[1], ...CATEGORIES.map((category) => category.type)]),
+    columnWidthForTexts([CATEGORIES_HEADERS[2]]),
   ];
   return widths.map((pixelSize, index) => buildColumnWidthRequest(sheetId, index, pixelSize));
 }
@@ -334,18 +404,36 @@ const MONTH_LABEL_SAMPLES = Array.from({ length: 12 }, (_, month) =>
   formatMonthLabel(new Date(2000, month, 1)),
 );
 
-export function buildDashboardColumnWidthRequests(sheetId: number): sheets_v4.Schema$Request[] {
-  const blockA = DASHBOARD_BLOCK_A_HEADERS.map((header, index) =>
-    buildColumnWidthRequest(
-      sheetId,
-      index,
-      columnWidthForTexts(index === 0 ? [header, ...MONTH_LABEL_SAMPLES] : [header]),
-    ),
-  );
-
+export function buildDashboardColumnWidthRequests(
+  sheetId: number,
+  keyMetricLabels: readonly string[],
+): sheets_v4.Schema$Request[] {
   const expenseCategoryNames = CATEGORIES.filter(
     (category) => category.type === TRANSACTION_TYPE_LABELS.Expense,
   ).map((category) => category.name);
+
+  // Column B is shared by Block A's "Total Income" header AND the Key
+  // Metrics block above it (see buildKeyMetricsHeaderFormatRequest) — its
+  // widest actual content is the Top 3 Expense Categories metric value, not
+  // Block A's short header text, so that has to drive the width too.
+  const topExpenseCategoriesSample = [...expenseCategoryNames]
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 3)
+    .join(', ');
+
+  const blockA = DASHBOARD_BLOCK_A_HEADERS.map((header, index) => {
+    // Column A (index 0) is also shared with the Key Metrics block's labels
+    // above it (see buildKeyMetricsHeaderFormatRequest) — same reasoning as
+    // column B below, just for the label side instead of the value side.
+    const sampleTexts =
+      index === 0
+        ? [header, ...MONTH_LABEL_SAMPLES, ...keyMetricLabels]
+        : index === 1
+          ? [header, topExpenseCategoriesSample]
+          : [header];
+    return buildColumnWidthRequest(sheetId, index, columnWidthForTexts(sampleTexts));
+  });
+
   const blockBColumnTexts = [
     [DASHBOARD_BLOCK_B_HEADERS[0], ...expenseCategoryNames],
     [DASHBOARD_BLOCK_B_HEADERS[1]],
@@ -358,6 +446,19 @@ export function buildDashboardColumnWidthRequests(sheetId: number): sheets_v4.Sc
   );
 
   return [...blockA, ...blockB];
+}
+
+export function buildCreditCardPayoutsColumnWidthRequests(
+  sheetId: number,
+  headers: readonly string[],
+): sheets_v4.Schema$Request[] {
+  return headers.map((header, index) =>
+    buildColumnWidthRequest(
+      sheetId,
+      index,
+      columnWidthForTexts(index === 0 ? [header, ...MONTH_LABEL_SAMPLES] : [header]),
+    ),
+  );
 }
 
 export function buildTransactionsRowHeightRequest(): sheets_v4.Schema$Request {
@@ -376,8 +477,15 @@ export function buildTransactionsRowHeightRequest(): sheets_v4.Schema$Request {
 }
 
 async function main(): Promise<void> {
+  const { CREDIT_CARD_PAYOUT_DAY_1: payoutDay1, CREDIT_CARD_PAYOUT_DAY_2: payoutDay2 } = env;
+  if (payoutDay1 === undefined || payoutDay2 === undefined) {
+    throw new Error(
+      'CREDIT_CARD_PAYOUT_DAY_1 and CREDIT_CARD_PAYOUT_DAY_2 must both be set to provision the Credit Card Payouts tab',
+    );
+  }
+
   const sheets = createSheetsClient();
-  const title = `${env.BAR_NAME} — Cash Flow Ledger`;
+  const title = `${env.BAR_NAME} — יומן תזרים מזומנים`;
 
   const created = await createSpreadsheet(sheets, title);
   const spreadsheetId = created.spreadsheetId;
@@ -389,19 +497,21 @@ async function main(): Promise<void> {
           sheetId: TRANSACTIONS_SHEET_ID,
           title: TRANSACTIONS_SHEET_TITLE,
           gridProperties: { frozenRowCount: 1 },
-          rightToLeft: false,
+          rightToLeft: true,
         },
         fields: 'title,gridProperties.frozenRowCount,rightToLeft',
       },
     },
-    { addSheet: { properties: { title: CATEGORIES_SHEET_TITLE, rightToLeft: false } } },
-    { addSheet: { properties: { title: DASHBOARD_SHEET_TITLE, rightToLeft: false } } },
+    { addSheet: { properties: { title: CATEGORIES_SHEET_TITLE, rightToLeft: true } } },
+    { addSheet: { properties: { title: DASHBOARD_SHEET_TITLE, rightToLeft: true } } },
+    { addSheet: { properties: { title: CREDIT_CARD_PAYOUTS_SHEET_TITLE, rightToLeft: true } } },
   ]);
-  const [, categoriesReply, dashboardReply] = structuralUpdate.replies ?? [];
+  const [, categoriesReply, dashboardReply, creditCardPayoutsReply] =
+    structuralUpdate.replies ?? [];
   const categoriesSheetId = extractAddedSheetId(categoriesReply);
   const dashboardSheetId = extractAddedSheetId(dashboardReply);
+  const creditCardPayoutsSheetId = extractAddedSheetId(creditCardPayoutsReply);
 
-  const keyMetrics = generateKeyMetricsRows();
   const now = new Date();
   const anchorMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthlySummaryRows = generateMonthlySummaryRows(anchorMonth);
@@ -412,19 +522,26 @@ async function main(): Promise<void> {
     throw new Error('expected at least one expense category to generate a breakdown row');
   }
 
+  const creditCardPayoutHeaders = generateCreditCardPayoutHeaders(payoutDay1, payoutDay2);
+  const creditCardPayoutRows = generateCreditCardPayoutRows(anchorMonth);
+  const keyMetrics = [
+    ...generateKeyMetricsRows(),
+    generateNextPayoutMetricRow(payoutDay1, payoutDay2),
+  ];
+
   // Every write below targets a disjoint range on a sheet the structural
   // batchUpdate above already created — safe to run concurrently rather than
   // paying one round-trip per write.
   await Promise.all([
-    updateValues(sheets, spreadsheetId, rangeString('Transactions', 'A', 1, 'Q', 1), [
+    updateValues(sheets, spreadsheetId, rangeString(TRANSACTIONS_SHEET_TITLE, 'A', 1, 'R', 1), [
       [...TRANSACTIONS_HEADERS],
     ]),
     updateValues(
       sheets,
       spreadsheetId,
-      rangeString('Categories', 'A', 1, 'C', CATEGORIES.length + 1),
+      rangeString(CATEGORIES_SHEET_TITLE, 'A', 1, 'C', CATEGORIES.length + 1),
       [
-        ['Category', 'Type', 'Notes'],
+        [...CATEGORIES_HEADERS],
         ...CATEGORIES.map((category) => [category.name, category.type, '']),
       ],
     ),
@@ -435,14 +552,14 @@ async function main(): Promise<void> {
     updateValues(
       sheets,
       spreadsheetId,
-      rangeString('Dashboard', 'A', DASHBOARD_TITLE_ROW, 'A', DASHBOARD_TITLE_ROW),
+      rangeString(DASHBOARD_SHEET_TITLE, 'A', DASHBOARD_TITLE_ROW, 'A', DASHBOARD_TITLE_ROW),
       [[title]],
     ),
     updateValues(
       sheets,
       spreadsheetId,
       rangeString(
-        'Dashboard',
+        DASHBOARD_SHEET_TITLE,
         'A',
         DASHBOARD_BLOCK_C_START_ROW,
         'B',
@@ -454,7 +571,7 @@ async function main(): Promise<void> {
       sheets,
       spreadsheetId,
       rangeString(
-        'Dashboard',
+        DASHBOARD_SHEET_TITLE,
         'A',
         DASHBOARD_BLOCK_A_HEADER_ROW,
         'E',
@@ -466,7 +583,7 @@ async function main(): Promise<void> {
       sheets,
       spreadsheetId,
       rangeString(
-        'Dashboard',
+        DASHBOARD_SHEET_TITLE,
         'A',
         DASHBOARD_BLOCK_A_START_ROW,
         'E',
@@ -484,7 +601,7 @@ async function main(): Promise<void> {
       sheets,
       spreadsheetId,
       rangeString(
-        'Dashboard',
+        DASHBOARD_SHEET_TITLE,
         DASHBOARD_BLOCK_B_COLS.category,
         DASHBOARD_BLOCK_B_HEADER_ROW,
         DASHBOARD_BLOCK_B_COLS.percent,
@@ -496,7 +613,7 @@ async function main(): Promise<void> {
       sheets,
       spreadsheetId,
       rangeString(
-        'Dashboard',
+        DASHBOARD_SHEET_TITLE,
         DASHBOARD_BLOCK_B_COLS.category,
         firstBreakdownRow.row,
         DASHBOARD_BLOCK_B_COLS.percent,
@@ -509,17 +626,56 @@ async function main(): Promise<void> {
         row.percentFormula,
       ]),
     ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString(
+        CREDIT_CARD_PAYOUTS_SHEET_TITLE,
+        CREDIT_CARD_PAYOUTS_COLS.month,
+        CREDIT_CARD_PAYOUTS_HEADER_ROW,
+        CREDIT_CARD_PAYOUTS_COLS.payout2Amount,
+        CREDIT_CARD_PAYOUTS_HEADER_ROW,
+      ),
+      [[...creditCardPayoutHeaders]],
+    ),
+    updateValues(
+      sheets,
+      spreadsheetId,
+      rangeString(
+        CREDIT_CARD_PAYOUTS_SHEET_TITLE,
+        CREDIT_CARD_PAYOUTS_COLS.month,
+        CREDIT_CARD_PAYOUTS_START_ROW,
+        CREDIT_CARD_PAYOUTS_COLS.payout2Amount,
+        CREDIT_CARD_PAYOUTS_END_ROW,
+      ),
+      creditCardPayoutRows.map((row) => [
+        formatMonthLabel(row.month),
+        row.payout1AmountFormula,
+        row.payout2AmountFormula,
+      ]),
+    ),
   ]);
 
   await batchUpdate(sheets, spreadsheetId, [
     buildTransactionsHeaderFormatRequest(),
     buildCategoriesHeaderFormatRequest(categoriesSheetId),
+    buildKeyMetricsHeaderFormatRequest(dashboardSheetId),
     ...buildDashboardHeaderFormatRequests(dashboardSheetId),
+    buildCreditCardPayoutsHeaderFormatRequest(creditCardPayoutsSheetId),
+    buildCategoryBreakdownPercentFormatRequest(
+      dashboardSheetId,
+      firstBreakdownRow.row,
+      lastBreakdownRow.row,
+    ),
     ...buildTransactionsConditionalFormatRequests(),
     ...buildCategoriesConditionalFormatRequests(categoriesSheetId),
     ...buildTransactionsColumnWidthRequests(),
     ...buildCategoriesColumnWidthRequests(categoriesSheetId),
-    ...buildDashboardColumnWidthRequests(dashboardSheetId),
+    ...buildDashboardColumnWidthRequests(
+      dashboardSheetId,
+      keyMetrics.map((metric) => metric.label),
+    ),
+    ...buildCreditCardPayoutsColumnWidthRequests(creditCardPayoutsSheetId, creditCardPayoutHeaders),
     buildTransactionsRowHeightRequest(),
   ]);
 
