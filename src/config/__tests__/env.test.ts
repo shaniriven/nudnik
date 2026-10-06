@@ -8,6 +8,9 @@ const validEnv: NodeJS.ProcessEnv = {
   SHEETS_OAUTH_CLIENT_ID: 'client-id',
   SHEETS_OAUTH_CLIENT_SECRET: 'client-secret',
   SHEETS_OAUTH_REFRESH_TOKEN: 'refresh-token',
+  GMAIL_OAUTH_CLIENT_ID: 'gmail-client-id',
+  GMAIL_OAUTH_CLIENT_SECRET: 'gmail-client-secret',
+  GMAIL_OAUTH_REFRESH_TOKEN: 'gmail-refresh-token',
   GOOGLE_SHEET_ID: 'sheet-id',
   TEST_GOOGLE_SHEET_ID: 'test-sheet-id',
   GOOGLE_DRIVE_ZREPORTS_FOLDER_ID: 'folder-id',
@@ -55,13 +58,16 @@ describe('parseEnv', () => {
     expect(() => parseEnv(broken)).toThrow(/valid IANA timezone/);
   });
 
-  it('allows Telegram/Claude/Google/invite-code vars to be omitted (not built yet)', () => {
+  it('allows Telegram/Claude/Google/invite-code vars to be omitted (not every entry point needs every integration)', () => {
     const {
       TELEGRAM_BOT_TOKEN: _TELEGRAM_BOT_TOKEN,
       CLAUDE_API_KEY: _CLAUDE_API_KEY,
       SHEETS_OAUTH_CLIENT_ID: _SHEETS_OAUTH_CLIENT_ID,
       SHEETS_OAUTH_CLIENT_SECRET: _SHEETS_OAUTH_CLIENT_SECRET,
       SHEETS_OAUTH_REFRESH_TOKEN: _SHEETS_OAUTH_REFRESH_TOKEN,
+      GMAIL_OAUTH_CLIENT_ID: _GMAIL_OAUTH_CLIENT_ID,
+      GMAIL_OAUTH_CLIENT_SECRET: _GMAIL_OAUTH_CLIENT_SECRET,
+      GMAIL_OAUTH_REFRESH_TOKEN: _GMAIL_OAUTH_REFRESH_TOKEN,
       GOOGLE_SHEET_ID: _GOOGLE_SHEET_ID,
       TEST_GOOGLE_SHEET_ID: _TEST_GOOGLE_SHEET_ID,
       GOOGLE_DRIVE_ZREPORTS_FOLDER_ID: _GOOGLE_DRIVE_ZREPORTS_FOLDER_ID,

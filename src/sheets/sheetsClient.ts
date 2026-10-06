@@ -2,69 +2,9 @@ import { google } from 'googleapis';
 import type { sheets_v4 } from 'googleapis';
 import { z } from 'zod';
 import { env } from '../config/env';
-import { logger } from '../lib/logger';
-import { withRetry } from '../lib/withRetry';
+import { callGoogleApi, GOOGLE_API_TIMEOUT_MS } from '../lib/googleApiErrors';
 
-// This block (RETRYABLE_NETWORK_CODES / isGoogleApiErrorLike / isRetryableGoogleError)
-// is generic gaxios-error classification, not Sheets-specific — Gmail (step 3) and
-// Drive (step 8) clients go through the same gaxios stack and will need byte-identical
-// logic. Extract to a shared src/lib/googleApiErrors.ts the moment the second caller
-// (gmailClient.ts) exists, rather than copy-pasting this block again.
-const RETRYABLE_NETWORK_CODES = new Set([
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'ENOTFOUND',
-  'ECONNREFUSED',
-  'EAI_AGAIN',
-]);
-
-interface GoogleApiErrorLike {
-  code?: string | number;
-  response?: { status?: number };
-}
-
-function isGoogleApiErrorLike(err: unknown): err is GoogleApiErrorLike {
-  return typeof err === 'object' && err !== null;
-}
-
-// Retry on network failure / 429 / 5xx (transient); never on 4xx auth,
-// permission, or malformed-request errors — those won't succeed on retry.
-function isRetryableGoogleError(err: unknown): boolean {
-  if (!isGoogleApiErrorLike(err)) {
-    return false;
-  }
-  const status = err.response?.status;
-  if (typeof status === 'number' && (status === 429 || status >= 500)) {
-    return true;
-  }
-  return typeof err.code === 'string' && RETRYABLE_NETWORK_CODES.has(err.code);
-}
-
-function withGoogleRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
-  return withRetry(fn, {
-    retries: 3,
-    baseDelayMs: 200,
-    isRetryable: isRetryableGoogleError,
-    onRetry: (err, attempt) => {
-      logger.warn({ context, attempt, err }, 'retrying Google Sheets API call');
-    },
-  });
-}
-
-// Every googleapis call accepts a MethodOptions second argument (a GaxiosOptions,
-// including `timeout`) alongside its params — without it, a hung connection (not a
-// clean error/rejection) never settles, so withRetry's catch-based retry never runs.
-export const GOOGLE_API_TIMEOUT_MS = 10_000;
-
-async function callGoogleApi<T, R>(
-  fn: () => Promise<{ data: R }>,
-  context: string,
-  schema: z.ZodType<T>,
-  extract: (data: R) => unknown = (data) => data,
-): Promise<T> {
-  const response = await withGoogleRetry(fn, context);
-  return schema.parse(extract(response.data));
-}
+export { GOOGLE_API_TIMEOUT_MS };
 
 export function createSheetsClient(): sheets_v4.Sheets {
   const clientId = env.SHEETS_OAUTH_CLIENT_ID;

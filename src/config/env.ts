@@ -19,6 +19,12 @@ const envSchema = z
   .object({
     DATABASE_URL: z.string().url(),
 
+    // These integration vars are optional at the schema level because env.ts is
+    // loaded by every entry point (bot service, scan-cron service, and one-off
+    // scripts like provision-sheet.ts/scan-emails.ts), and no single entry point
+    // needs every integration. Each client constructor (createSheetsClient,
+    // createGmailClient, etc.) throws a clear error if ITS specific vars are
+    // missing at first use — that's the real fail-fast boundary, not this schema.
     TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
 
     CLAUDE_API_KEY: z.string().min(1).optional(),
@@ -26,6 +32,12 @@ const envSchema = z
     SHEETS_OAUTH_CLIENT_ID: z.string().min(1).optional(),
     SHEETS_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
     SHEETS_OAUTH_REFRESH_TOKEN: z.string().min(1).optional(),
+
+    // Gmail runs under a separate OAuth grant (the owner's personal mailbox) from
+    // Sheets/Drive — see docs/architecture.md section 4a.
+    GMAIL_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+    GMAIL_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+    GMAIL_OAUTH_REFRESH_TOKEN: z.string().min(1).optional(),
 
     GOOGLE_SHEET_ID: z.string().min(1).optional(),
     TEST_GOOGLE_SHEET_ID: z.string().min(1).optional(),
